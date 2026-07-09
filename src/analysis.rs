@@ -171,8 +171,15 @@ pub struct WordStat {
     pub sentence_count: usize,
     pub document_count: usize,
     pub document_frequency: f64,
+    pub sources: Vec<WordSourceStat>,
     pub definition: Option<String>,
     pub examples: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct WordSourceStat {
+    pub source: String,
+    pub count: usize,
 }
 
 #[derive(Debug, Default)]
@@ -182,6 +189,7 @@ struct WordAccumulator {
     first_position: usize,
     sentence_indexes: BTreeSet<usize>,
     document_indexes: BTreeSet<usize>,
+    document_counts: BTreeMap<usize, usize>,
     capitalized_non_initial_count: usize,
     lowercase_observation_count: usize,
     examples: Vec<String>,
@@ -212,6 +220,7 @@ pub fn analyze(config: &AnalysisConfig) -> RebeResult<AnalysisReport> {
         raw_stats,
         total_words,
         documents.len(),
+        &source_files,
         &known_words,
         &ignored_words,
         config,
@@ -263,6 +272,7 @@ fn collect_stats(
                 stat.count += 1;
                 stat.sentence_indexes.insert(global_sentence_index);
                 stat.document_indexes.insert(document_index);
+                *stat.document_counts.entry(document_index).or_insert(0) += 1;
                 *stat.forms.entry(token.surface).or_insert(0) += 1;
 
                 if token_index > 0 {
@@ -293,6 +303,7 @@ fn build_candidates(
     raw_stats: BTreeMap<String, WordAccumulator>,
     total_words: usize,
     total_documents: usize,
+    source_files: &[PathBuf],
     known_words: &HashSet<String>,
     ignored_words: &HashSet<String>,
     config: &AnalysisConfig,
@@ -332,6 +343,7 @@ fn build_candidates(
                 sentence_count: stat.sentence_indexes.len(),
                 document_count: stat.document_indexes.len(),
                 document_frequency,
+                sources: build_source_stats(stat.document_counts, source_files),
                 definition: None,
                 examples: stat.examples,
             }
@@ -435,6 +447,21 @@ fn sorted_forms(forms: BTreeMap<String, usize>) -> Vec<String> {
     let mut forms = forms.into_iter().collect::<Vec<_>>();
     forms.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
     forms.into_iter().map(|(word, _)| word).collect()
+}
+
+fn build_source_stats(
+    document_counts: BTreeMap<usize, usize>,
+    source_files: &[PathBuf],
+) -> Vec<WordSourceStat> {
+    document_counts
+        .into_iter()
+        .filter_map(|(document_index, count)| {
+            source_files.get(document_index).map(|path| WordSourceStat {
+                source: path.display().to_string(),
+                count,
+            })
+        })
+        .collect()
 }
 
 fn sort_words(words: &mut [WordStat], sort_mode: SortMode) {

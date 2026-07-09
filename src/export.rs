@@ -1,7 +1,7 @@
 use std::fmt::Write;
 
 use crate::error::{RebeError, RebeResult};
-use crate::AnalysisReport;
+use crate::{AnalysisReport, WordSourceStat};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputFormat {
@@ -44,14 +44,14 @@ fn render_txt(report: &AnalysisReport) -> String {
     writeln!(output).expect("write string");
     writeln!(
         output,
-        "word\tcount\tfrequency\tcoverage\tfirst_position\tsentences\tdocuments\tdocument_frequency\tforms\tdefinition\texamples"
+        "word\tcount\tfrequency\tcoverage\tfirst_position\tsentences\tdocuments\tdocument_frequency\tforms\tsources\tdefinition\texamples"
     )
     .expect("write string");
 
     for word in &report.words {
         writeln!(
             output,
-            "{}\t{}\t{:.6}\t{:.6}\t{}\t{}\t{}\t{:.6}\t{}\t{}\t{}",
+            "{}\t{}\t{:.6}\t{:.6}\t{}\t{}\t{}\t{:.6}\t{}\t{}\t{}\t{}",
             word.word,
             word.count,
             word.frequency,
@@ -61,6 +61,7 @@ fn render_txt(report: &AnalysisReport) -> String {
             word.document_count,
             word.document_frequency,
             word.forms.join("|"),
+            format_source_stats(&word.sources),
             word.definition.as_deref().unwrap_or_default(),
             word.examples.join(" | ")
         )
@@ -73,7 +74,7 @@ fn render_txt(report: &AnalysisReport) -> String {
 fn render_csv(report: &AnalysisReport) -> String {
     let mut output = String::new();
 
-    output.push_str("word,count,frequency,cumulative_coverage,first_position,sentence_count,document_count,document_frequency,forms,definition,examples\n");
+    output.push_str("word,count,frequency,cumulative_coverage,first_position,sentence_count,document_count,document_frequency,forms,sources,definition,examples\n");
 
     for word in &report.words {
         let row = [
@@ -86,6 +87,7 @@ fn render_csv(report: &AnalysisReport) -> String {
             word.document_count.to_string(),
             format!("{:.6}", word.document_frequency),
             word.forms.join("|"),
+            format_source_stats(&word.sources),
             word.definition.clone().unwrap_or_default(),
             word.examples.join(" | "),
         ];
@@ -156,6 +158,12 @@ fn render_json(report: &AnalysisReport) -> String {
         .expect("write string");
         writeln!(
             output,
+            "      \"sources\": {},",
+            json_source_stats(&word.sources)
+        )
+        .expect("write string");
+        writeln!(
+            output,
             "      \"definition\": {},",
             json_optional_string(word.definition.as_deref())
         )
@@ -195,6 +203,30 @@ fn json_string_array(values: &[String]) -> String {
         .join(", ");
 
     format!("[{values}]")
+}
+
+fn format_source_stats(sources: &[WordSourceStat]) -> String {
+    sources
+        .iter()
+        .map(|source| format!("{}:{}", source.source, source.count))
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
+fn json_source_stats(sources: &[WordSourceStat]) -> String {
+    let sources = sources
+        .iter()
+        .map(|source| {
+            format!(
+                "{{\"source\":\"{}\",\"count\":{}}}",
+                json_escape(&source.source),
+                source.count
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    format!("[{sources}]")
 }
 
 fn json_optional_string(value: Option<&str>) -> String {
@@ -274,6 +306,10 @@ mod tests {
                 sentence_count: 1,
                 document_count: 1,
                 document_frequency: 1.0,
+                sources: vec![WordSourceStat {
+                    source: "book.txt".to_string(),
+                    count: 2,
+                }],
                 definition: Some("to look at written words".to_string()),
                 examples: vec!["A sentence, with comma.".to_string()],
             }],

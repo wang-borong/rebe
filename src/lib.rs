@@ -9,7 +9,7 @@ pub mod text;
 
 use std::fs;
 
-pub use analysis::{analyze, AnalysisConfig, AnalysisReport, SortMode, WordStat};
+pub use analysis::{analyze, AnalysisConfig, AnalysisReport, SortMode, WordSourceStat, WordStat};
 pub use cli::{parse_args, CliCommand};
 pub use error::{RebeError, RebeResult};
 pub use export::OutputFormat;
