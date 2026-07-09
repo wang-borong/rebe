@@ -39,6 +39,7 @@ pub struct AnalysisConfig {
     pub input: PathBuf,
     pub output: Option<PathBuf>,
     pub format: OutputFormat,
+    pub profile_path: Option<PathBuf>,
     pub lemma_map_path: Option<PathBuf>,
     pub known_words_path: Option<PathBuf>,
     pub ignore_words_path: Option<PathBuf>,
@@ -76,6 +77,7 @@ impl Default for AnalysisConfig {
             input: PathBuf::new(),
             output: None,
             format: OutputFormat::Txt,
+            profile_path: None,
             lemma_map_path: None,
             known_words_path: None,
             ignore_words_path: None,
@@ -248,11 +250,21 @@ pub fn analyze(config: &AnalysisConfig) -> RebeResult<AnalysisReport> {
         .iter()
         .map(|document| document.path.clone())
         .collect::<Vec<_>>();
-    let lemma_map = profile::load_lemma_map(config.lemma_map_path.as_deref())?;
-    let known_words =
-        profile::load_word_set_with_lemma_map(config.known_words_path.as_deref(), &lemma_map)?;
-    let mut ignored_words =
-        profile::load_word_set_with_lemma_map(config.ignore_words_path.as_deref(), &lemma_map)?;
+    let user_profile = profile::load_user_profile(config.profile_path.as_deref())?;
+    let mut lemma_map = user_profile.lemma_map;
+    lemma_map.extend(profile::load_lemma_map(config.lemma_map_path.as_deref())?);
+
+    let mut known_words = profile::normalize_word_items(&user_profile.known_words, &lemma_map);
+    known_words.extend(profile::load_word_set_with_lemma_map(
+        config.known_words_path.as_deref(),
+        &lemma_map,
+    )?);
+
+    let mut ignored_words = profile::normalize_word_items(&user_profile.ignored_words, &lemma_map);
+    ignored_words.extend(profile::load_word_set_with_lemma_map(
+        config.ignore_words_path.as_deref(),
+        &lemma_map,
+    )?);
 
     if config.ignore_common_words {
         ignored_words.extend(profile::common_word_set(&lemma_map));
@@ -757,6 +769,50 @@ mod tests {
 
         fs::remove_file(input_path).ok();
         fs::remove_file(lemma_path).ok();
+    }
+
+    #[test]
+    fn applies_user_profile_words_and_lemmas() {
+        let input_path = temp_file_path("profile_input", "txt");
+        let profile_path = temp_file_path("profile", "ini");
+
+        fs::write(&input_path, "Mice gather. Mouse gather. Alice gather.").expect("write input");
+        fs::write(
+            &profile_path,
+            r#"
+            [known]
+            mice
+
+            [ignore]
+            alice
+
+            [lemma]
+            mice = mouse
+            "#,
+        )
+        .expect("write profile");
+
+        let config = AnalysisConfig {
+            input: input_path.clone(),
+            profile_path: Some(profile_path.clone()),
+            ignore_common_words: false,
+            ..AnalysisConfig::default()
+        };
+
+        let report = analyze(&config).expect("analyze");
+        let words = report
+            .words
+            .iter()
+            .map(|word| word.word.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(words, vec!["gather"]);
+        assert_eq!(report.known_words, 1);
+        assert!(!words.contains(&"mouse"));
+        assert!(!words.contains(&"alice"));
+
+        fs::remove_file(input_path).ok();
+        fs::remove_file(profile_path).ok();
     }
 
     #[test]

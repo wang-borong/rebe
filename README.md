@@ -94,6 +94,7 @@ cargo run -- analyze book.txt \
 
 - `--known <PATH>`：熟词表，每行一个词，统计结果会排除这些词。
 - `--ignore <PATH>`：额外忽略词表，每行一个词。
+- `--profile <PATH>`：用户 profile 文件，可以在一个文件中维护 `[known]`、`[ignore]`、`[lemma]` 三段配置。
 - `--lemma-map <PATH>`：词形归一表，支持 `surface lemma`、`surface=lemma`、`surface,lemma` 三种写法。
 - `--min-count <N>` / `--max-count <N>`：按出现次数筛选词汇。
 - `--min-frequency <R>` / `--max-frequency <R>`：按词频比例筛选词汇，支持 `0.05`、`5`、`5%` 三种写法。
@@ -116,6 +117,34 @@ cargo run -- analyze book.txt \
 - `--include-proper-nouns`：保留候选专有名词；默认会过滤只在非句首大写出现的词。
 
 输出字段包含每个词的源文档分布：`sources` 会记录该词在哪些文本文件、EPUB/PDF 页面或电子书中出现，以及各自出现次数。
+
+用户 profile 示例：
+
+```ini
+[known]
+reader
+written words
+
+[ignore]
+alice
+bob
+
+[lemma]
+mice = mouse
+went go
+```
+
+使用时：
+
+```bash
+cargo run -- analyze book.txt \
+  --profile examples/profile.ini \
+  --min-count 2 \
+  --format csv \
+  --output words.csv
+```
+
+`--known`、`--ignore`、`--lemma-map` 仍然可以和 `--profile` 叠加使用；其中单独传入的 `--lemma-map` 会覆盖 profile 中同名的 lemma 规则。
 
 内置有道 API 用法：
 

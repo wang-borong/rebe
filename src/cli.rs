@@ -42,6 +42,7 @@ USAGE:\n\
 OPTIONS:\n\
     -o, --output <PATH>       Write result to a file instead of stdout\n\
         --format <FORMAT>     Output format: txt, csv, json (default: txt)\n\
+        --profile <PATH>      User profile with [known], [ignore], and [lemma] sections\n\
         --lemma-map <PATH>    Lemma override file; supports 'surface lemma', 'surface=lemma', or 'surface,lemma'\n\
         --known <PATH>        Known words file; matched words are hidden\n\
         --ignore <PATH>       Extra ignored words file\n\
@@ -92,6 +93,9 @@ fn parse_analyze_args(args: Vec<String>) -> RebeResult<CliCommand> {
             }
             "--format" => {
                 config.format = OutputFormat::parse(&next_value(&args, &mut index, arg)?)?;
+            }
+            "--profile" => {
+                config.profile_path = Some(PathBuf::from(next_value(&args, &mut index, arg)?));
             }
             "--lemma-map" => {
                 config.lemma_map_path = Some(PathBuf::from(next_value(&args, &mut index, arg)?));
@@ -309,6 +313,8 @@ mod tests {
             "rebe".to_string(),
             "analyze".to_string(),
             "book.txt".to_string(),
+            "--profile".to_string(),
+            "profile.ini".to_string(),
             "--min-count".to_string(),
             "3".to_string(),
             "--format".to_string(),
@@ -319,6 +325,7 @@ mod tests {
         match command {
             CliCommand::Analyze(config) => {
                 assert_eq!(config.input, PathBuf::from("book.txt"));
+                assert_eq!(config.profile_path, Some(PathBuf::from("profile.ini")));
                 assert_eq!(config.min_count, 3);
                 assert_eq!(config.format, OutputFormat::Csv);
             }
