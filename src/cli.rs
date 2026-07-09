@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use crate::analysis::{AnalysisConfig, SortMode};
+use crate::dict::MdxDefinitionFormat;
 use crate::error::{RebeError, RebeResult};
 use crate::export::OutputFormat;
 
@@ -58,6 +59,7 @@ OPTIONS:\n\
         --define-command <CMD> Fetch definitions with an external command template\n\
         --define-youdao       Fetch definitions with the built-in Youdao API client\n\
         --define-mdx <PATH>   Fetch definitions from a local MDict .mdx file or directory\n\
+        --mdx-definition-format <FORMAT> MDX definition format: plain, html (default: plain)\n\
         --youdao-app-key <KEY> Youdao app key; falls back to YOUDAO_APP_KEY or VUE_APP_YOUDAO_APP_KEY\n\
         --youdao-app-secret <SECRET> Youdao app secret; falls back to YOUDAO_APP_SECRET or VUE_APP_YOUDAO_APP_SECRET\n\
         --youdao-from <LANG>  Youdao source language (default: en)\n\
@@ -158,6 +160,10 @@ fn parse_analyze_args(args: Vec<String>) -> RebeResult<CliCommand> {
             }
             "--define-mdx" => {
                 config.define_mdx_path = Some(PathBuf::from(next_value(&args, &mut index, arg)?));
+            }
+            "--mdx-definition-format" => {
+                config.mdx_definition_format =
+                    MdxDefinitionFormat::parse(&next_value(&args, &mut index, arg)?)?;
             }
             "--youdao-app-key" => {
                 config.youdao_app_key = Some(next_value(&args, &mut index, arg)?);
@@ -450,6 +456,8 @@ mod tests {
             "book.txt".to_string(),
             "--define-mdx".to_string(),
             "dicts/longman.mdx".to_string(),
+            "--mdx-definition-format".to_string(),
+            "html".to_string(),
         ];
 
         let command = parse_args(args).expect("parse args");
@@ -459,6 +467,7 @@ mod tests {
                     config.define_mdx_path,
                     Some(PathBuf::from("dicts/longman.mdx"))
                 );
+                assert_eq!(config.mdx_definition_format, MdxDefinitionFormat::Html);
             }
             CliCommand::Help => panic!("expected analyze command"),
         }

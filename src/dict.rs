@@ -35,6 +35,24 @@ impl DefinitionProvider {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MdxDefinitionFormat {
+    Plain,
+    Html,
+}
+
+impl MdxDefinitionFormat {
+    pub fn parse(value: &str) -> RebeResult<Self> {
+        match value {
+            "plain" | "text" => Ok(Self::Plain),
+            "html" | "raw" => Ok(Self::Html),
+            _ => Err(RebeError::InvalidArgument(format!(
+                "unsupported MDX definition format: {value}; expected plain or html"
+            ))),
+        }
+    }
+}
+
 pub struct DefinitionCommand {
     template: String,
     timeout: Duration,
@@ -214,11 +232,16 @@ impl YoudaoDefinitionClient {
 pub struct MdxDefinitionClient {
     dictionary: MdxFile,
     max_chars: Option<usize>,
+    format: MdxDefinitionFormat,
     cache: HashMap<String, Option<String>>,
 }
 
 impl MdxDefinitionClient {
-    pub fn open(path: impl AsRef<Path>, max_chars: Option<usize>) -> RebeResult<Self> {
+    pub fn open(
+        path: impl AsRef<Path>,
+        max_chars: Option<usize>,
+        format: MdxDefinitionFormat,
+    ) -> RebeResult<Self> {
         let mdx_path = resolve_mdx_path(path.as_ref())?;
         let dictionary = MdxFile::open(&mdx_path).map_err(|err| {
             RebeError::InvalidArgument(format!(
@@ -230,6 +253,7 @@ impl MdxDefinitionClient {
         Ok(Self {
             dictionary,
             max_chars: normalize_max_chars(max_chars),
+            format,
             cache: HashMap::new(),
         })
     }
@@ -245,7 +269,7 @@ impl MdxDefinitionClient {
             .map_err(|err| {
                 RebeError::InvalidArgument(format!("failed to look up {word} in MDX: {err}"))
             })?
-            .and_then(|record| clean_mdx_definition(&record.text, self.max_chars));
+            .and_then(|record| clean_mdx_definition(&record.text, self.max_chars, self.format));
         self.cache.insert(word.to_string(), result.clone());
 
         Ok(result)
@@ -307,11 +331,16 @@ fn clean_definition(raw: &str, max_chars: Option<usize>) -> Option<String> {
     }
 }
 
-fn clean_mdx_definition(raw: &str, max_chars: Option<usize>) -> Option<String> {
-    let text = if raw.contains('<') && raw.contains('>') {
-        html2text::from_read(raw.as_bytes(), 80).unwrap_or_else(|_| raw.to_string())
-    } else {
-        raw.to_string()
+fn clean_mdx_definition(
+    raw: &str,
+    max_chars: Option<usize>,
+    format: MdxDefinitionFormat,
+) -> Option<String> {
+    let text = match format {
+        MdxDefinitionFormat::Plain if raw.contains('<') && raw.contains('>') => {
+            html2text::from_read(raw.as_bytes(), 80).unwrap_or_else(|_| raw.to_string())
+        }
+        MdxDefinitionFormat::Plain | MdxDefinitionFormat::Html => raw.to_string(),
     };
 
     clean_definition(&text, max_chars)
@@ -669,12 +698,27 @@ mod tests {
         let definition = clean_mdx_definition(
             r#"<link href="style.css" rel="stylesheet"><div><b>reader</b><span>读者</span></div>"#,
             Some(DEFAULT_DEFINITION_MAX_CHARS),
+            MdxDefinitionFormat::Plain,
         )
         .expect("definition");
 
         assert!(definition.contains("reader"));
         assert!(definition.contains("读者"));
         assert!(!definition.contains("<div>"));
+    }
+
+    #[test]
+    fn keeps_mdx_html_definition_when_requested() {
+        let definition = clean_mdx_definition(
+            r#"<div><b>reader</b><span>读者</span></div>"#,
+            Some(DEFAULT_DEFINITION_MAX_CHARS),
+            MdxDefinitionFormat::Html,
+        )
+        .expect("definition");
+
+        assert!(definition.contains("<div>"));
+        assert!(definition.contains("<b>reader</b>"));
+        assert!(definition.contains("读者"));
     }
 
     #[test]
@@ -685,8 +729,12 @@ mod tests {
             .expect("decode mdx fixture");
         fs::write(&path, fixture).expect("write mdx fixture");
 
-        let mut client =
-            MdxDefinitionClient::open(&path, Some(DEFAULT_DEFINITION_MAX_CHARS)).expect("open mdx");
+        let mut client = MdxDefinitionClient::open(
+            &path,
+            Some(DEFAULT_DEFINITION_MAX_CHARS),
+            MdxDefinitionFormat::Plain,
+        )
+        .expect("open mdx");
         let definition = client.lookup("hello").expect("lookup").expect("definition");
 
         assert!(definition.contains("hello"));

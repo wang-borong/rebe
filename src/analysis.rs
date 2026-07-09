@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::PathBuf;
 
 use crate::dict::{
-    DefinitionCommand, DefinitionProvider, MdxDefinitionClient, YoudaoDefinitionClient,
-    YoudaoDefinitionConfig, DEFAULT_DEFINITION_MAX_CHARS,
+    DefinitionCommand, DefinitionProvider, MdxDefinitionClient, MdxDefinitionFormat,
+    YoudaoDefinitionClient, YoudaoDefinitionConfig, DEFAULT_DEFINITION_MAX_CHARS,
 };
 use crate::document::{load_documents, Document};
 use crate::error::{RebeError, RebeResult};
@@ -60,6 +60,7 @@ pub struct AnalysisConfig {
     pub define_command: Option<String>,
     pub define_youdao: bool,
     pub define_mdx_path: Option<PathBuf>,
+    pub mdx_definition_format: MdxDefinitionFormat,
     pub youdao_app_key: Option<String>,
     pub youdao_app_secret: Option<String>,
     pub youdao_from: Option<String>,
@@ -96,6 +97,7 @@ impl Default for AnalysisConfig {
             define_command: None,
             define_youdao: false,
             define_mdx_path: None,
+            mdx_definition_format: MdxDefinitionFormat::Plain,
             youdao_app_key: None,
             youdao_app_secret: None,
             youdao_from: None,
@@ -607,6 +609,7 @@ fn definition_provider(config: &AnalysisConfig) -> RebeResult<Option<DefinitionP
         return Ok(Some(DefinitionProvider::Mdx(MdxDefinitionClient::open(
             path,
             config.definition_max_chars,
+            config.mdx_definition_format,
         )?)));
     }
 

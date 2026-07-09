@@ -104,6 +104,7 @@ cargo run -- analyze book.txt \
 - `--examples <N>`：为每个词保留 N 个原文例句，默认 2 个。
 - `--define-command <CMD>`：通过外部命令查询释义。命令模板支持 `{word}`、`{word_raw}`、`{word_url}` 占位符。
 - `--define-mdx <PATH>`：通过本地 MDict `.mdx` 词典查询释义；路径可以是 `.mdx` 文件，也可以是只包含一个 `.mdx` 的词典目录。
+- `--mdx-definition-format <FORMAT>`：MDX 释义输出格式，支持 `plain` 和 `html`，默认 `plain`；`html` 会保留 MDX 词条 HTML。
 - `--define-youdao`：使用内置有道官方 API 客户端查询释义。
 - `--youdao-app-key <KEY>` / `--youdao-app-secret <SECRET>`：有道应用凭证；也可以使用环境变量 `YOUDAO_APP_KEY`、`YOUDAO_APP_SECRET`，兼容 `CopyTranslator` 使用的 `VUE_APP_YOUDAO_APP_KEY`、`VUE_APP_YOUDAO_APP_SECRET`。
 - `--youdao-from <LANG>` / `--youdao-to <LANG>`：有道语言代码，默认 `en` -> `zh-CHS`。
@@ -136,6 +137,17 @@ cargo run -- analyze book.txt \
   --definition-max-chars 300 \
   --format csv \
   --output words.csv
+```
+
+如果需要保留 MDX 词条里的 HTML 样式或结构，可以使用：
+
+```bash
+cargo run -- analyze book.txt \
+  --top 50 \
+  --define-mdx "/home/wbr/Public/dicts/FF大神版朗文/LDOCE5++ V 2-15.mdx" \
+  --mdx-definition-format html \
+  --format json \
+  --output words.json
 ```
 
 释义功能仍然支持外部命令插件。可以用其它网络词典 API、本地词典或任意脚本做一层 wrapper，然后交给 `--define-command` 调用。例如：
