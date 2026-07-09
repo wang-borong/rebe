@@ -2,7 +2,10 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::PathBuf;
 
-use crate::dict::DefinitionCommand;
+use crate::dict::{
+    DefinitionCommand, DefinitionProvider, MdxDefinitionClient, YoudaoDefinitionClient,
+    YoudaoDefinitionConfig, DEFAULT_DEFINITION_MAX_CHARS,
+};
 use crate::document::{load_documents, Document};
 use crate::error::{RebeError, RebeResult};
 use crate::export::OutputFormat;
@@ -55,8 +58,15 @@ pub struct AnalysisConfig {
     pub ignore_common_words: bool,
     pub ignore_proper_nouns: bool,
     pub define_command: Option<String>,
+    pub define_youdao: bool,
+    pub define_mdx_path: Option<PathBuf>,
+    pub youdao_app_key: Option<String>,
+    pub youdao_app_secret: Option<String>,
+    pub youdao_from: Option<String>,
+    pub youdao_to: Option<String>,
     pub definition_limit: Option<usize>,
     pub definition_timeout_ms: u64,
+    pub definition_max_chars: Option<usize>,
 }
 
 impl Default for AnalysisConfig {
@@ -84,8 +94,15 @@ impl Default for AnalysisConfig {
             ignore_common_words: true,
             ignore_proper_nouns: true,
             define_command: None,
+            define_youdao: false,
+            define_mdx_path: None,
+            youdao_app_key: None,
+            youdao_app_secret: None,
+            youdao_from: None,
+            youdao_to: None,
             definition_limit: Some(DEFAULT_DEFINITION_LIMIT),
             definition_timeout_ms: DEFAULT_DEFINITION_TIMEOUT_MS,
+            definition_max_chars: Some(DEFAULT_DEFINITION_MAX_CHARS),
         }
     }
 }
@@ -140,8 +157,34 @@ impl AnalysisConfig {
             ));
         }
 
+        let definition_provider_count = usize::from(self.define_command.is_some())
+            + usize::from(self.define_youdao)
+            + usize::from(self.define_mdx_path.is_some());
+
+        if definition_provider_count > 1 {
+            return Err(RebeError::InvalidArgument(
+                "--define-command, --define-youdao, and --define-mdx cannot be used together"
+                    .to_string(),
+            ));
+        }
+
         if let Some(command) = &self.define_command {
-            DefinitionCommand::new(command.clone(), self.definition_timeout_ms)?;
+            DefinitionCommand::new(
+                command.clone(),
+                self.definition_timeout_ms,
+                self.definition_max_chars,
+            )?;
+        }
+
+        if self.define_youdao {
+            YoudaoDefinitionConfig::from_options(
+                self.youdao_app_key.clone(),
+                self.youdao_app_secret.clone(),
+                self.youdao_from.clone(),
+                self.youdao_to.clone(),
+                self.definition_timeout_ms,
+                self.definition_max_chars,
+            )?;
         }
 
         Ok(())
@@ -517,11 +560,9 @@ fn apply_coverage_target(words: &mut Vec<WordStat>, coverage_target: Option<f64>
 }
 
 fn apply_definitions(words: &mut [WordStat], config: &AnalysisConfig) -> RebeResult<()> {
-    let Some(command_template) = &config.define_command else {
+    let Some(mut provider) = definition_provider(config)? else {
         return Ok(());
     };
-    let mut command =
-        DefinitionCommand::new(command_template.clone(), config.definition_timeout_ms)?;
 
     for (index, word) in words.iter_mut().enumerate() {
         if config
@@ -532,10 +573,44 @@ fn apply_definitions(words: &mut [WordStat], config: &AnalysisConfig) -> RebeRes
             break;
         }
 
-        word.definition = command.lookup(&word.word)?;
+        word.definition = provider.lookup(&word.word)?;
     }
 
     Ok(())
+}
+
+fn definition_provider(config: &AnalysisConfig) -> RebeResult<Option<DefinitionProvider>> {
+    if let Some(command_template) = &config.define_command {
+        let command = DefinitionCommand::new(
+            command_template.clone(),
+            config.definition_timeout_ms,
+            config.definition_max_chars,
+        )?;
+        return Ok(Some(DefinitionProvider::Command(command)));
+    }
+
+    if config.define_youdao {
+        let youdao_config = YoudaoDefinitionConfig::from_options(
+            config.youdao_app_key.clone(),
+            config.youdao_app_secret.clone(),
+            config.youdao_from.clone(),
+            config.youdao_to.clone(),
+            config.definition_timeout_ms,
+            config.definition_max_chars,
+        )?;
+        return Ok(Some(DefinitionProvider::Youdao(
+            YoudaoDefinitionClient::new(youdao_config),
+        )));
+    }
+
+    if let Some(path) = &config.define_mdx_path {
+        return Ok(Some(DefinitionProvider::Mdx(MdxDefinitionClient::open(
+            path,
+            config.definition_max_chars,
+        )?)));
+    }
+
+    Ok(None)
 }
 
 fn is_probable_proper_noun(stat: &WordAccumulator) -> bool {

@@ -56,8 +56,15 @@ OPTIONS:\n\
         --top <N>             Keep only the first N words after sorting\n\
         --examples <N>        Examples per word from source text (default: 2)\n\
         --define-command <CMD> Fetch definitions with an external command template\n\
-        --definition-limit <N> Max words to define when --define-command is used (default: 50; 0 = unlimited)\n\
-        --definition-timeout-ms <N> Per-word definition command timeout (default: 10000)\n\
+        --define-youdao       Fetch definitions with the built-in Youdao API client\n\
+        --define-mdx <PATH>   Fetch definitions from a local MDict .mdx file or directory\n\
+        --youdao-app-key <KEY> Youdao app key; falls back to YOUDAO_APP_KEY or VUE_APP_YOUDAO_APP_KEY\n\
+        --youdao-app-secret <SECRET> Youdao app secret; falls back to YOUDAO_APP_SECRET or VUE_APP_YOUDAO_APP_SECRET\n\
+        --youdao-from <LANG>  Youdao source language (default: en)\n\
+        --youdao-to <LANG>    Youdao target language (default: zh-CHS)\n\
+        --definition-limit <N> Max words to define when a definition provider is used (default: 50; 0 = unlimited)\n\
+        --definition-timeout-ms <N> Per-word definition lookup timeout (default: 10000)\n\
+        --definition-max-chars <N> Max characters per definition (default: 600; 0 = unlimited)\n\
         --min-word-len <N>    Minimum normalized word length (default: 1)\n\
         --sort <MODE>         Sort mode: frequency, word (default: frequency)\n\
         --include-common      Do not hide the built-in common function words\n\
@@ -146,6 +153,24 @@ fn parse_analyze_args(args: Vec<String>) -> RebeResult<CliCommand> {
             "--define-command" => {
                 config.define_command = Some(next_value(&args, &mut index, arg)?);
             }
+            "--define-youdao" => {
+                config.define_youdao = true;
+            }
+            "--define-mdx" => {
+                config.define_mdx_path = Some(PathBuf::from(next_value(&args, &mut index, arg)?));
+            }
+            "--youdao-app-key" => {
+                config.youdao_app_key = Some(next_value(&args, &mut index, arg)?);
+            }
+            "--youdao-app-secret" => {
+                config.youdao_app_secret = Some(next_value(&args, &mut index, arg)?);
+            }
+            "--youdao-from" => {
+                config.youdao_from = Some(next_value(&args, &mut index, arg)?);
+            }
+            "--youdao-to" => {
+                config.youdao_to = Some(next_value(&args, &mut index, arg)?);
+            }
             "--definition-limit" => {
                 let limit = parse_usize(&next_value(&args, &mut index, arg)?, arg)?;
                 config.definition_limit = if limit == 0 { None } else { Some(limit) };
@@ -153,6 +178,14 @@ fn parse_analyze_args(args: Vec<String>) -> RebeResult<CliCommand> {
             "--definition-timeout-ms" => {
                 config.definition_timeout_ms =
                     parse_positive_u64(&next_value(&args, &mut index, arg)?, arg)?;
+            }
+            "--definition-max-chars" => {
+                let max_chars = parse_usize(&next_value(&args, &mut index, arg)?, arg)?;
+                config.definition_max_chars = if max_chars == 0 {
+                    None
+                } else {
+                    Some(max_chars)
+                };
             }
             "--min-word-len" => {
                 config.min_word_len =
@@ -344,6 +377,8 @@ mod tests {
             "3".to_string(),
             "--definition-timeout-ms".to_string(),
             "2000".to_string(),
+            "--definition-max-chars".to_string(),
+            "120".to_string(),
         ];
 
         let command = parse_args(args).expect("parse args");
@@ -355,9 +390,98 @@ mod tests {
                 );
                 assert_eq!(config.definition_limit, Some(3));
                 assert_eq!(config.definition_timeout_ms, 2000);
+                assert_eq!(config.definition_max_chars, Some(120));
             }
             CliCommand::Help => panic!("expected analyze command"),
         }
+    }
+
+    #[test]
+    fn parses_unlimited_definition_max_chars() {
+        let args = vec![
+            "rebe".to_string(),
+            "book.txt".to_string(),
+            "--definition-max-chars".to_string(),
+            "0".to_string(),
+        ];
+
+        let command = parse_args(args).expect("parse args");
+        match command {
+            CliCommand::Analyze(config) => {
+                assert_eq!(config.definition_max_chars, None);
+            }
+            CliCommand::Help => panic!("expected analyze command"),
+        }
+    }
+
+    #[test]
+    fn parses_youdao_definition_options() {
+        let args = vec![
+            "rebe".to_string(),
+            "book.txt".to_string(),
+            "--define-youdao".to_string(),
+            "--youdao-app-key".to_string(),
+            "key".to_string(),
+            "--youdao-app-secret".to_string(),
+            "secret".to_string(),
+            "--youdao-from".to_string(),
+            "en".to_string(),
+            "--youdao-to".to_string(),
+            "zh-CHS".to_string(),
+        ];
+
+        let command = parse_args(args).expect("parse args");
+        match command {
+            CliCommand::Analyze(config) => {
+                assert!(config.define_youdao);
+                assert_eq!(config.youdao_app_key, Some("key".to_string()));
+                assert_eq!(config.youdao_app_secret, Some("secret".to_string()));
+                assert_eq!(config.youdao_from, Some("en".to_string()));
+                assert_eq!(config.youdao_to, Some("zh-CHS".to_string()));
+            }
+            CliCommand::Help => panic!("expected analyze command"),
+        }
+    }
+
+    #[test]
+    fn parses_mdx_definition_option() {
+        let args = vec![
+            "rebe".to_string(),
+            "book.txt".to_string(),
+            "--define-mdx".to_string(),
+            "dicts/longman.mdx".to_string(),
+        ];
+
+        let command = parse_args(args).expect("parse args");
+        match command {
+            CliCommand::Analyze(config) => {
+                assert_eq!(
+                    config.define_mdx_path,
+                    Some(PathBuf::from("dicts/longman.mdx"))
+                );
+            }
+            CliCommand::Help => panic!("expected analyze command"),
+        }
+    }
+
+    #[test]
+    fn rejects_multiple_definition_providers() {
+        let args = vec![
+            "rebe".to_string(),
+            "book.txt".to_string(),
+            "--define-command".to_string(),
+            "printf 'meaning %s' {word}".to_string(),
+            "--define-youdao".to_string(),
+            "--youdao-app-key".to_string(),
+            "key".to_string(),
+            "--youdao-app-secret".to_string(),
+            "secret".to_string(),
+        ];
+
+        let err = parse_args(args).expect_err("definition providers should conflict");
+        assert!(err
+            .to_string()
+            .contains("--define-command, --define-youdao, and --define-mdx"));
     }
 
     #[test]

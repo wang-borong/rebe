@@ -9,4 +9,12 @@ edition = "2021"
 boko = { version = "0.3.0", default-features = false }
 docx-lite = "0.2.0"
 epub-parser = "0.3.4"
+html2text = "0.17.1"
+mdict-rs = { version = "0.1.4", features = ["lzo"] }
 pdf-extract = "0.12.0"
+serde_json = "1.0.150"
+sha2 = "0.10.9"
+ureq = "3.3.0"
+
+[dev-dependencies]
+base64 = "0.22.1"

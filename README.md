@@ -80,7 +80,7 @@
 
 ## 当前 MVP 使用方式
 
-当前版本先实现文本分析核心，支持单个文本文件、EPUB、PDF、DOCX、Kindle 文件或目录输入。目录输入会递归读取 `.txt`、`.md`、`.markdown`、`.epub`、`.pdf`、`.docx`、`.azw3`、`.azw`、`.mobi`、`.kfx` 文件。EPUB 通过 `epub-parser` crate 解析，PDF 通过 `pdf-extract` crate 解析，DOCX 通过 `docx-lite` crate 解析，Kindle 格式通过 `boko` crate 解析为 Markdown 后进入同一文本分析流程，仅支持非 DRM 文件。EPUB/PDF 会按阅读顺序拆成内部页面文档。已支持词频统计、词形归一表、熟词过滤、额外忽略词过滤、出现次数筛选、频率比例筛选、文档覆盖筛选、覆盖率截断、Top N 筛选、专有名词候选过滤、例句提取、外部命令释义，以及 `txt`、`csv`、`json` 三种输出格式。
+当前版本先实现文本分析核心，支持单个文本文件、EPUB、PDF、DOCX、Kindle 文件或目录输入。目录输入会递归读取 `.txt`、`.md`、`.markdown`、`.epub`、`.pdf`、`.docx`、`.azw3`、`.azw`、`.mobi`、`.kfx` 文件。EPUB 通过 `epub-parser` crate 解析，PDF 通过 `pdf-extract` crate 解析，DOCX 通过 `docx-lite` crate 解析，Kindle 格式通过 `boko` crate 解析为 Markdown 后进入同一文本分析流程，仅支持非 DRM 文件。EPUB/PDF 会按阅读顺序拆成内部页面文档。已支持词频统计、词形归一表、熟词过滤、额外忽略词过滤、出现次数筛选、频率比例筛选、文档覆盖筛选、覆盖率截断、Top N 筛选、专有名词候选过滤、例句提取、本地 MDX 词典释义、内置有道 API 释义、外部命令插件释义，以及 `txt`、`csv`、`json` 三种输出格式。
 
 ```bash
 cargo run -- analyze book.txt \
@@ -103,25 +103,52 @@ cargo run -- analyze book.txt \
 - `--top <N>`：只输出排序后的前 N 个词。
 - `--examples <N>`：为每个词保留 N 个原文例句，默认 2 个。
 - `--define-command <CMD>`：通过外部命令查询释义。命令模板支持 `{word}`、`{word_raw}`、`{word_url}` 占位符。
+- `--define-mdx <PATH>`：通过本地 MDict `.mdx` 词典查询释义；路径可以是 `.mdx` 文件，也可以是只包含一个 `.mdx` 的词典目录。
+- `--define-youdao`：使用内置有道官方 API 客户端查询释义。
+- `--youdao-app-key <KEY>` / `--youdao-app-secret <SECRET>`：有道应用凭证；也可以使用环境变量 `YOUDAO_APP_KEY`、`YOUDAO_APP_SECRET`，兼容 `CopyTranslator` 使用的 `VUE_APP_YOUDAO_APP_KEY`、`VUE_APP_YOUDAO_APP_SECRET`。
+- `--youdao-from <LANG>` / `--youdao-to <LANG>`：有道语言代码，默认 `en` -> `zh-CHS`。
 - `--definition-limit <N>`：限制释义查询的词数，默认 50；设置为 0 表示不限制。
-- `--definition-timeout-ms <N>`：单个词的释义命令超时时间，默认 10000 毫秒。
+- `--definition-timeout-ms <N>`：单个词的释义查询超时时间，默认 10000 毫秒。
+- `--definition-max-chars <N>`：限制每个释义的最大字符数，默认 600；设置为 0 表示不截断。
 - `--format txt|csv|json`：选择输出格式。
 - `--include-common`：保留内置常见功能词；默认会过滤 `the`、`and`、`of` 等常见功能词。
 - `--include-proper-nouns`：保留候选专有名词；默认会过滤只在非句首大写出现的词。
 
 输出字段包含每个词的源文档分布：`sources` 会记录该词在哪些文本文件、EPUB/PDF 页面或电子书中出现，以及各自出现次数。
 
-释义功能不绑定某个词典服务。可以用有道、其它网络词典 API，或本地脚本做一层 wrapper，然后交给 `--define-command` 调用。例如：
+内置有道 API 用法：
 
 ```bash
+YOUDAO_APP_KEY=your_app_key YOUDAO_APP_SECRET=your_app_secret \
 cargo run -- analyze book.txt \
   --top 50 \
-  --define-command 'scripts/define-youdao.sh {word}' \
+  --define-youdao \
   --format csv \
   --output words.csv
 ```
 
-仓库内提供了一个无需 API key 的英文释义示例：
+本地 MDX 词典用法：
+
+```bash
+cargo run -- analyze book.txt \
+  --top 50 \
+  --define-mdx "/home/wbr/Public/dicts/FF大神版朗文/LDOCE5++ V 2-15.mdx" \
+  --definition-max-chars 300 \
+  --format csv \
+  --output words.csv
+```
+
+释义功能仍然支持外部命令插件。可以用其它网络词典 API、本地词典或任意脚本做一层 wrapper，然后交给 `--define-command` 调用。例如：
+
+```bash
+cargo run -- analyze book.txt \
+  --top 50 \
+  --define-command 'scripts/define-tsv.py glossary.tsv {word}' \
+  --format csv \
+  --output words.csv
+```
+
+`scripts/README.md` 记录了插件脚本协议。仓库内还提供了一个无需 API key 的英文网络释义示例：
 
 ```bash
 cargo run -- analyze book.txt \
@@ -131,7 +158,7 @@ cargo run -- analyze book.txt \
   --output words.csv
 ```
 
-后续仍需要继续完善网络词典 wrapper、真实公开语料 fixture，以及更好的词形还原能力。
+后续仍需要继续完善真实公开语料 fixture、更多词典插件示例，以及更好的词形还原能力。
 
 这个只是这个工具的一个基本的 idea，代码以及工具的功能都需要不断的完善。
 如果大家对工具的功能方面，或是对帮助英文书籍阅读或学英语有其它建议，我们欢迎大家畅言。
