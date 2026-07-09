@@ -1,5 +1,6 @@
 pub mod analysis;
 pub mod cli;
+pub mod dict;
 pub mod document;
 pub mod error;
 pub mod export;

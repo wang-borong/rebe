@@ -1,3 +1,10 @@
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Token {
+    pub surface: String,
+    pub normalized: String,
+    pub is_capitalized: bool,
+}
+
 pub fn split_sentences(text: &str) -> Vec<String> {
     let mut sentences = Vec::new();
     let mut current = String::new();
@@ -26,7 +33,14 @@ pub fn split_sentences(text: &str) -> Vec<String> {
 }
 
 pub fn tokenize_sentence(sentence: &str) -> Vec<String> {
-    let mut words = Vec::new();
+    tokenize_sentence_details(sentence)
+        .into_iter()
+        .map(|token| token.surface)
+        .collect()
+}
+
+pub fn tokenize_sentence_details(sentence: &str) -> Vec<Token> {
+    let mut tokens = Vec::new();
     let mut current = String::new();
     let chars = sentence.chars().collect::<Vec<_>>();
     let mut index = 0;
@@ -35,18 +49,18 @@ pub fn tokenize_sentence(sentence: &str) -> Vec<String> {
         let ch = chars[index];
 
         if ch.is_ascii_alphabetic() {
-            current.push(ch.to_ascii_lowercase());
+            current.push(ch);
         } else if ch == '\'' && is_apostrophe_inside_word(&chars, index, &current) {
             current.push(ch);
         } else {
-            push_word(&mut words, &mut current);
+            push_token(&mut tokens, &mut current);
         }
 
         index += 1;
     }
 
-    push_word(&mut words, &mut current);
-    words
+    push_token(&mut tokens, &mut current);
+    tokens
 }
 
 pub fn clean_word(word: &str) -> Option<String> {
@@ -138,12 +152,25 @@ fn push_sentence(sentences: &mut Vec<String>, current: &mut String) {
     current.clear();
 }
 
-fn push_word(words: &mut Vec<String>, current: &mut String) {
-    if let Some(cleaned) = clean_word(current) {
-        words.push(cleaned);
+fn push_token(tokens: &mut Vec<Token>, current: &mut String) {
+    if let Some(surface) = clean_word(current) {
+        if let Some(normalized) = normalize_word(&surface) {
+            tokens.push(Token {
+                surface,
+                normalized,
+                is_capitalized: starts_with_uppercase(current),
+            });
+        }
     }
 
     current.clear();
+}
+
+fn starts_with_uppercase(word: &str) -> bool {
+    word.chars()
+        .find(|ch| ch.is_ascii_alphabetic())
+        .map(|ch| ch.is_ascii_uppercase())
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -165,5 +192,15 @@ mod tests {
         assert_eq!(normalize_word("reading"), Some("read".to_string()));
         assert_eq!(normalize_word("studies"), Some("study".to_string()));
         assert_eq!(normalize_word("stopped"), Some("stop".to_string()));
+    }
+
+    #[test]
+    fn token_details_preserve_capitalization_signal() {
+        let tokens = tokenize_sentence_details("We met Alice and bob.");
+
+        assert_eq!(tokens[2].surface, "alice");
+        assert!(tokens[2].is_capitalized);
+        assert_eq!(tokens[4].surface, "bob");
+        assert!(!tokens[4].is_capitalized);
     }
 }

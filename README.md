@@ -80,7 +80,7 @@
 
 ## 当前 MVP 使用方式
 
-当前版本先实现 `txt` 文本分析核心，支持词频统计、熟词过滤、额外忽略词过滤、频率区间筛选、Top N 筛选、例句提取，以及 `txt`、`csv`、`json` 三种输出格式。
+当前版本先实现文本分析核心，支持单个文本文件或目录输入。目录输入会递归读取 `.txt`、`.md`、`.markdown` 文件。已支持词频统计、熟词过滤、额外忽略词过滤、出现次数筛选、频率比例筛选、覆盖率截断、Top N 筛选、专有名词候选过滤、例句提取、外部命令释义，以及 `txt`、`csv`、`json` 三种输出格式。
 
 ```bash
 cargo run -- analyze book.txt \
@@ -95,12 +95,28 @@ cargo run -- analyze book.txt \
 - `--known <PATH>`：熟词表，每行一个词，统计结果会排除这些词。
 - `--ignore <PATH>`：额外忽略词表，每行一个词。
 - `--min-count <N>` / `--max-count <N>`：按出现次数筛选词汇。
+- `--min-frequency <R>` / `--max-frequency <R>`：按词频比例筛选词汇，支持 `0.05`、`5`、`5%` 三种写法。
+- `--coverage <R>`：按频率排序后，保留词汇直到累计覆盖率达到指定比例。
 - `--top <N>`：只输出排序后的前 N 个词。
 - `--examples <N>`：为每个词保留 N 个原文例句，默认 2 个。
+- `--define-command <CMD>`：通过外部命令查询释义。命令模板支持 `{word}`、`{word_raw}`、`{word_url}` 占位符。
+- `--definition-limit <N>`：限制释义查询的词数，默认 50；设置为 0 表示不限制。
+- `--definition-timeout-ms <N>`：单个词的释义命令超时时间，默认 10000 毫秒。
 - `--format txt|csv|json`：选择输出格式。
 - `--include-common`：保留内置常见功能词；默认会过滤 `the`、`and`、`of` 等常见功能词。
+- `--include-proper-nouns`：保留候选专有名词；默认会过滤只在非句首大写出现的词。
 
-后续仍需要继续完善 PDF、EPUB、AZW3、docx 等格式输入，以及离线词典释义能力。
+释义功能不绑定某个词典服务。可以用有道、其它网络词典 API，或本地脚本做一层 wrapper，然后交给 `--define-command` 调用。例如：
+
+```bash
+cargo run -- analyze book.txt \
+  --top 50 \
+  --define-command 'scripts/define-youdao.sh {word}' \
+  --format csv \
+  --output words.csv
+```
+
+后续仍需要继续完善 PDF、EPUB、AZW3、docx 等格式输入，以及更好的词形还原能力。
 
 这个只是这个工具的一个基本的 idea，代码以及工具的功能都需要不断的完善。
 如果大家对工具的功能方面，或是对帮助英文书籍阅读或学英语有其它建议，我们欢迎大家畅言。

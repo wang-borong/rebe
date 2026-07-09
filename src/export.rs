@@ -35,6 +35,7 @@ fn render_txt(report: &AnalysisReport) -> String {
     let mut output = String::new();
 
     writeln!(output, "Input: {}", report.input.display()).expect("write string");
+    writeln!(output, "Source files: {}", report.source_files.len()).expect("write string");
     writeln!(output, "Total words: {}", report.total_words).expect("write string");
     writeln!(output, "Unique words: {}", report.unique_words).expect("write string");
     writeln!(output, "Candidate words: {}", report.candidate_words).expect("write string");
@@ -43,21 +44,23 @@ fn render_txt(report: &AnalysisReport) -> String {
     writeln!(output).expect("write string");
     writeln!(
         output,
-        "word\tcount\tfrequency\tcoverage\tfirst_position\tsentences\tforms\texamples"
+        "word\tcount\tfrequency\tcoverage\tfirst_position\tsentences\tdocuments\tforms\tdefinition\texamples"
     )
     .expect("write string");
 
     for word in &report.words {
         writeln!(
             output,
-            "{}\t{}\t{:.6}\t{:.6}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{:.6}\t{:.6}\t{}\t{}\t{}\t{}\t{}\t{}",
             word.word,
             word.count,
             word.frequency,
             word.cumulative_coverage,
             word.first_position,
             word.sentence_count,
+            word.document_count,
             word.forms.join("|"),
+            word.definition.as_deref().unwrap_or_default(),
             word.examples.join(" | ")
         )
         .expect("write string");
@@ -69,9 +72,7 @@ fn render_txt(report: &AnalysisReport) -> String {
 fn render_csv(report: &AnalysisReport) -> String {
     let mut output = String::new();
 
-    output.push_str(
-        "word,count,frequency,cumulative_coverage,first_position,sentence_count,forms,examples\n",
-    );
+    output.push_str("word,count,frequency,cumulative_coverage,first_position,sentence_count,document_count,forms,definition,examples\n");
 
     for word in &report.words {
         let row = [
@@ -81,7 +82,9 @@ fn render_csv(report: &AnalysisReport) -> String {
             format!("{:.6}", word.cumulative_coverage),
             word.first_position.to_string(),
             word.sentence_count.to_string(),
+            word.document_count.to_string(),
             word.forms.join("|"),
+            word.definition.clone().unwrap_or_default(),
             word.examples.join(" | "),
         ];
 
@@ -107,6 +110,12 @@ fn render_json(report: &AnalysisReport) -> String {
         json_escape(&report.input.display().to_string())
     )
     .expect("write string");
+    writeln!(
+        output,
+        "  \"source_files\": {},",
+        json_string_array(&path_strings(report))
+    )
+    .expect("write string");
     writeln!(output, "  \"total_words\": {},", report.total_words).expect("write string");
     writeln!(output, "  \"unique_words\": {},", report.unique_words).expect("write string");
     writeln!(output, "  \"candidate_words\": {},", report.candidate_words).expect("write string");
@@ -129,10 +138,18 @@ fn render_json(report: &AnalysisReport) -> String {
             .expect("write string");
         writeln!(output, "      \"sentence_count\": {},", word.sentence_count)
             .expect("write string");
+        writeln!(output, "      \"document_count\": {},", word.document_count)
+            .expect("write string");
         writeln!(
             output,
             "      \"forms\": {},",
             json_string_array(&word.forms)
+        )
+        .expect("write string");
+        writeln!(
+            output,
+            "      \"definition\": {},",
+            json_optional_string(word.definition.as_deref())
         )
         .expect("write string");
         writeln!(
@@ -170,6 +187,20 @@ fn json_string_array(values: &[String]) -> String {
         .join(", ");
 
     format!("[{values}]")
+}
+
+fn json_optional_string(value: Option<&str>) -> String {
+    value
+        .map(|value| format!("\"{}\"", json_escape(value)))
+        .unwrap_or_else(|| "null".to_string())
+}
+
+fn path_strings(report: &AnalysisReport) -> Vec<String> {
+    report
+        .source_files
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect()
 }
 
 fn json_escape(value: &str) -> String {
@@ -219,6 +250,7 @@ mod tests {
     fn sample_report() -> AnalysisReport {
         AnalysisReport {
             input: PathBuf::from("book.txt"),
+            source_files: vec![PathBuf::from("book.txt")],
             total_words: 10,
             unique_words: 4,
             candidate_words: 1,
@@ -232,6 +264,8 @@ mod tests {
                 cumulative_coverage: 0.2,
                 first_position: 1,
                 sentence_count: 1,
+                document_count: 1,
+                definition: Some("to look at written words".to_string()),
                 examples: vec!["A sentence, with comma.".to_string()],
             }],
         }

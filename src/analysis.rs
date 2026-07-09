@@ -2,13 +2,16 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::PathBuf;
 
-use crate::document::Document;
+use crate::dict::DefinitionCommand;
+use crate::document::{load_documents, Document};
 use crate::error::{RebeError, RebeResult};
 use crate::export::OutputFormat;
 use crate::profile;
 use crate::text;
 
 const MAX_EXAMPLE_CHARS: usize = 240;
+const DEFAULT_DEFINITION_LIMIT: usize = 50;
+const DEFAULT_DEFINITION_TIMEOUT_MS: u64 = 10_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortMode {
@@ -37,11 +40,18 @@ pub struct AnalysisConfig {
     pub ignore_words_path: Option<PathBuf>,
     pub min_count: usize,
     pub max_count: Option<usize>,
+    pub min_frequency: Option<f64>,
+    pub max_frequency: Option<f64>,
+    pub coverage_target: Option<f64>,
     pub top: Option<usize>,
     pub example_count: usize,
     pub min_word_len: usize,
     pub sort: SortMode,
     pub ignore_common_words: bool,
+    pub ignore_proper_nouns: bool,
+    pub define_command: Option<String>,
+    pub definition_limit: Option<usize>,
+    pub definition_timeout_ms: u64,
 }
 
 impl Default for AnalysisConfig {
@@ -54,11 +64,18 @@ impl Default for AnalysisConfig {
             ignore_words_path: None,
             min_count: 1,
             max_count: None,
+            min_frequency: None,
+            max_frequency: None,
+            coverage_target: None,
             top: None,
             example_count: 2,
             min_word_len: 1,
             sort: SortMode::Frequency,
             ignore_common_words: true,
+            ignore_proper_nouns: true,
+            define_command: None,
+            definition_limit: Some(DEFAULT_DEFINITION_LIMIT),
+            definition_timeout_ms: DEFAULT_DEFINITION_TIMEOUT_MS,
         }
     }
 }
@@ -77,6 +94,25 @@ impl AnalysisConfig {
             }
         }
 
+        if let (Some(min_frequency), Some(max_frequency)) = (self.min_frequency, self.max_frequency)
+        {
+            if max_frequency < min_frequency {
+                return Err(RebeError::InvalidArgument(
+                    "--max-frequency must be greater than or equal to --min-frequency".to_string(),
+                ));
+            }
+        }
+
+        if self.coverage_target.is_some() && self.sort != SortMode::Frequency {
+            return Err(RebeError::InvalidArgument(
+                "--coverage requires frequency sorting".to_string(),
+            ));
+        }
+
+        if let Some(command) = &self.define_command {
+            DefinitionCommand::new(command.clone(), self.definition_timeout_ms)?;
+        }
+
         Ok(())
     }
 }
@@ -84,6 +120,7 @@ impl AnalysisConfig {
 #[derive(Debug, Clone)]
 pub struct AnalysisReport {
     pub input: PathBuf,
+    pub source_files: Vec<PathBuf>,
     pub total_words: usize,
     pub unique_words: usize,
     pub candidate_words: usize,
@@ -101,6 +138,8 @@ pub struct WordStat {
     pub cumulative_coverage: f64,
     pub first_position: usize,
     pub sentence_count: usize,
+    pub document_count: usize,
+    pub definition: Option<String>,
     pub examples: Vec<String>,
 }
 
@@ -110,13 +149,20 @@ struct WordAccumulator {
     count: usize,
     first_position: usize,
     sentence_indexes: BTreeSet<usize>,
+    document_indexes: BTreeSet<usize>,
+    capitalized_non_initial_count: usize,
+    lowercase_observation_count: usize,
     examples: Vec<String>,
 }
 
 pub fn analyze(config: &AnalysisConfig) -> RebeResult<AnalysisReport> {
     config.validate()?;
 
-    let document = Document::load_txt(&config.input)?;
+    let documents = load_documents(&config.input)?;
+    let source_files = documents
+        .iter()
+        .map(|document| document.path.clone())
+        .collect::<Vec<_>>();
     let known_words = profile::load_word_set(config.known_words_path.as_deref())?;
     let mut ignored_words = profile::load_word_set(config.ignore_words_path.as_deref())?;
 
@@ -124,7 +170,7 @@ pub fn analyze(config: &AnalysisConfig) -> RebeResult<AnalysisReport> {
         ignored_words.extend(profile::common_word_set());
     }
 
-    let raw_stats = collect_stats(&document, config.example_count);
+    let raw_stats = collect_stats(&documents, config.example_count);
     let total_words = raw_stats.values().map(|stat| stat.count).sum::<usize>();
     let unique_words = raw_stats.len();
     let mut candidates =
@@ -132,13 +178,17 @@ pub fn analyze(config: &AnalysisConfig) -> RebeResult<AnalysisReport> {
 
     sort_words(&mut candidates, config.sort);
     apply_cumulative_coverage(&mut candidates, total_words);
+    apply_coverage_target(&mut candidates, config.coverage_target);
 
     if let Some(top) = config.top {
         candidates.truncate(top);
     }
 
+    apply_definitions(&mut candidates, config)?;
+
     Ok(AnalysisReport {
-        input: document.path,
+        input: config.input.clone(),
+        source_files,
         total_words,
         unique_words,
         candidate_words: candidates.len(),
@@ -148,36 +198,49 @@ pub fn analyze(config: &AnalysisConfig) -> RebeResult<AnalysisReport> {
     })
 }
 
-fn collect_stats(document: &Document, example_count: usize) -> BTreeMap<String, WordAccumulator> {
+fn collect_stats(
+    documents: &[Document],
+    example_count: usize,
+) -> BTreeMap<String, WordAccumulator> {
     let mut stats = BTreeMap::<String, WordAccumulator>::new();
     let mut position = 0;
+    let mut global_sentence_index = 0;
 
-    for (sentence_index, sentence) in document.sentences.iter().enumerate() {
-        let sentence_words = text::tokenize_sentence(sentence);
-        let normalized_words = sentence_words
-            .iter()
-            .filter_map(|word| text::normalize_word(word).map(|normalized| (word, normalized)))
-            .collect::<Vec<_>>();
+    for (document_index, document) in documents.iter().enumerate() {
+        for sentence in &document.sentences {
+            let tokens = text::tokenize_sentence_details(sentence);
 
-        for (surface_word, normalized_word) in normalized_words {
-            position += 1;
-            let stat = stats.entry(normalized_word).or_default();
+            for (token_index, token) in tokens.into_iter().enumerate() {
+                position += 1;
+                let stat = stats.entry(token.normalized).or_default();
 
-            if stat.count == 0 {
-                stat.first_position = position;
-            }
+                if stat.count == 0 {
+                    stat.first_position = position;
+                }
 
-            stat.count += 1;
-            stat.sentence_indexes.insert(sentence_index);
-            *stat.forms.entry(surface_word.clone()).or_insert(0) += 1;
+                stat.count += 1;
+                stat.sentence_indexes.insert(global_sentence_index);
+                stat.document_indexes.insert(document_index);
+                *stat.forms.entry(token.surface).or_insert(0) += 1;
 
-            if example_count > 0 && stat.examples.len() < example_count {
-                let example = trim_example(sentence);
+                if token_index > 0 {
+                    if token.is_capitalized {
+                        stat.capitalized_non_initial_count += 1;
+                    } else {
+                        stat.lowercase_observation_count += 1;
+                    }
+                }
 
-                if !stat.examples.iter().any(|existing| existing == &example) {
-                    stat.examples.push(example);
+                if example_count > 0 && stat.examples.len() < example_count {
+                    let example = trim_example(sentence);
+
+                    if !stat.examples.iter().any(|existing| existing == &example) {
+                        stat.examples.push(example);
+                    }
                 }
             }
+
+            global_sentence_index += 1;
         }
     }
 
@@ -193,7 +256,9 @@ fn build_candidates(
 ) -> Vec<WordStat> {
     raw_stats
         .into_iter()
-        .filter(|(word, stat)| should_keep_word(word, stat, known_words, ignored_words, config))
+        .filter(|(word, stat)| {
+            should_keep_word(word, stat, total_words, known_words, ignored_words, config)
+        })
         .map(|(word, stat)| {
             let frequency = if total_words == 0 {
                 0.0
@@ -209,6 +274,8 @@ fn build_candidates(
                 cumulative_coverage: 0.0,
                 first_position: stat.first_position,
                 sentence_count: stat.sentence_indexes.len(),
+                document_count: stat.document_indexes.len(),
+                definition: None,
                 examples: stat.examples,
             }
         })
@@ -218,6 +285,7 @@ fn build_candidates(
 fn should_keep_word(
     word: &str,
     stat: &WordAccumulator,
+    total_words: usize,
     known_words: &HashSet<String>,
     ignored_words: &HashSet<String>,
     config: &AnalysisConfig,
@@ -235,6 +303,32 @@ fn should_keep_word(
         .map(|max_count| stat.count > max_count)
         .unwrap_or(false)
     {
+        return false;
+    }
+
+    let frequency = if total_words == 0 {
+        0.0
+    } else {
+        stat.count as f64 / total_words as f64
+    };
+
+    if config
+        .min_frequency
+        .map(|min_frequency| frequency < min_frequency)
+        .unwrap_or(false)
+    {
+        return false;
+    }
+
+    if config
+        .max_frequency
+        .map(|max_frequency| frequency > max_frequency)
+        .unwrap_or(false)
+    {
+        return false;
+    }
+
+    if config.ignore_proper_nouns && is_probable_proper_noun(stat) {
         return false;
     }
 
@@ -283,6 +377,46 @@ fn apply_cumulative_coverage(words: &mut [WordStat], total_words: usize) {
         cumulative_count += word.count;
         word.cumulative_coverage = cumulative_count as f64 / total_words as f64;
     }
+}
+
+fn apply_coverage_target(words: &mut Vec<WordStat>, coverage_target: Option<f64>) {
+    let Some(coverage_target) = coverage_target else {
+        return;
+    };
+
+    let keep_count = words
+        .iter()
+        .position(|word| word.cumulative_coverage >= coverage_target)
+        .map(|index| index + 1)
+        .unwrap_or(words.len());
+
+    words.truncate(keep_count);
+}
+
+fn apply_definitions(words: &mut [WordStat], config: &AnalysisConfig) -> RebeResult<()> {
+    let Some(command_template) = &config.define_command else {
+        return Ok(());
+    };
+    let mut command =
+        DefinitionCommand::new(command_template.clone(), config.definition_timeout_ms)?;
+
+    for (index, word) in words.iter_mut().enumerate() {
+        if config
+            .definition_limit
+            .map(|limit| index >= limit)
+            .unwrap_or(false)
+        {
+            break;
+        }
+
+        word.definition = command.lookup(&word.word)?;
+    }
+
+    Ok(())
+}
+
+fn is_probable_proper_noun(stat: &WordAccumulator) -> bool {
+    stat.capitalized_non_initial_count > 0 && stat.lowercase_observation_count == 0
 }
 
 fn trim_example(sentence: &str) -> String {
@@ -361,6 +495,130 @@ mod tests {
     }
 
     #[test]
+    fn analyzes_directory_text_files() {
+        let dir_path = temp_dir_path("corpus");
+        fs::create_dir(&dir_path).expect("create dir");
+        fs::write(dir_path.join("a.txt"), "target alpha alpha.").expect("write first file");
+        fs::write(dir_path.join("b.md"), "target beta.").expect("write second file");
+        fs::write(dir_path.join("skip.json"), "target ignored.").expect("write ignored file");
+
+        let config = AnalysisConfig {
+            input: dir_path.clone(),
+            ignore_common_words: false,
+            ..AnalysisConfig::default()
+        };
+
+        let report = analyze(&config).expect("analyze directory");
+        let target = report
+            .words
+            .iter()
+            .find(|word| word.word == "target")
+            .expect("target word");
+
+        assert_eq!(report.source_files.len(), 2);
+        assert_eq!(report.total_words, 5);
+        assert_eq!(target.count, 2);
+        assert_eq!(target.document_count, 2);
+
+        fs::remove_dir_all(dir_path).ok();
+    }
+
+    #[test]
+    fn applies_frequency_ratio_range() {
+        let input_path = temp_file_path("frequency", "txt");
+        fs::write(&input_path, "alpha alpha alpha beta beta gamma delta").expect("write input");
+
+        let config = AnalysisConfig {
+            input: input_path.clone(),
+            min_frequency: Some(0.2),
+            max_frequency: Some(0.3),
+            ignore_common_words: false,
+            ..AnalysisConfig::default()
+        };
+
+        let report = analyze(&config).expect("analyze");
+
+        assert_eq!(report.words.len(), 1);
+        assert_eq!(report.words[0].word, "beta");
+
+        fs::remove_file(input_path).ok();
+    }
+
+    #[test]
+    fn truncates_by_coverage_target() {
+        let input_path = temp_file_path("coverage", "txt");
+        fs::write(&input_path, "alpha alpha alpha beta beta gamma").expect("write input");
+
+        let config = AnalysisConfig {
+            input: input_path.clone(),
+            coverage_target: Some(0.75),
+            ignore_common_words: false,
+            ..AnalysisConfig::default()
+        };
+
+        let report = analyze(&config).expect("analyze");
+        let words = report
+            .words
+            .iter()
+            .map(|word| word.word.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(words, vec!["alpha", "beta"]);
+        assert!(report.words[1].cumulative_coverage >= 0.75);
+
+        fs::remove_file(input_path).ok();
+    }
+
+    #[test]
+    fn filters_probable_proper_nouns() {
+        let input_path = temp_file_path("proper", "txt");
+        fs::write(&input_path, "We meet Alice. We meet Bob. We study ideas.").expect("write input");
+
+        let config = AnalysisConfig {
+            input: input_path.clone(),
+            ignore_common_words: false,
+            ..AnalysisConfig::default()
+        };
+
+        let report = analyze(&config).expect("analyze");
+        let words = report
+            .words
+            .iter()
+            .map(|word| word.word.as_str())
+            .collect::<Vec<_>>();
+
+        assert!(!words.contains(&"alice"));
+        assert!(!words.contains(&"bob"));
+        assert!(words.contains(&"idea"));
+
+        fs::remove_file(input_path).ok();
+    }
+
+    #[test]
+    fn attaches_definitions_from_external_command() {
+        let input_path = temp_file_path("definition", "txt");
+        fs::write(&input_path, "reader reader").expect("write input");
+
+        let config = AnalysisConfig {
+            input: input_path.clone(),
+            define_command: Some("printf 'meaning:%s' {word}".to_string()),
+            definition_limit: Some(1),
+            ignore_common_words: false,
+            ..AnalysisConfig::default()
+        };
+
+        let report = analyze(&config).expect("analyze");
+
+        assert_eq!(report.words.len(), 1);
+        assert_eq!(
+            report.words[0].definition,
+            Some("meaning:reader".to_string())
+        );
+
+        fs::remove_file(input_path).ok();
+    }
+
+    #[test]
     fn trims_long_examples() {
         let input_path = temp_file_path("long_example", "txt");
         let text = format!("{} vocabulary", "a".repeat(400));
@@ -392,5 +650,14 @@ mod tests {
             .as_nanos();
 
         std::env::temp_dir().join(format!("rebe_{name}_{nanos}.{extension}"))
+    }
+
+    fn temp_dir_path(name: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+
+        std::env::temp_dir().join(format!("rebe_{name}_{nanos}"))
     }
 }
