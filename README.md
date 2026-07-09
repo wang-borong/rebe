@@ -80,7 +80,7 @@
 
 ## 当前 MVP 使用方式
 
-当前版本先实现文本分析核心，支持单个文本文件、EPUB、PDF 或目录输入。目录输入会递归读取 `.txt`、`.md`、`.markdown`、`.epub`、`.pdf` 文件。EPUB 通过 `epub-parser` crate 解析，PDF 通过 `pdf-extract` crate 解析，都会按阅读顺序拆成内部页面文档。已支持词频统计、词形归一表、熟词过滤、额外忽略词过滤、出现次数筛选、频率比例筛选、文档覆盖筛选、覆盖率截断、Top N 筛选、专有名词候选过滤、例句提取、外部命令释义，以及 `txt`、`csv`、`json` 三种输出格式。
+当前版本先实现文本分析核心，支持单个文本文件、EPUB、PDF、DOCX 或目录输入。目录输入会递归读取 `.txt`、`.md`、`.markdown`、`.epub`、`.pdf`、`.docx` 文件。EPUB 通过 `epub-parser` crate 解析，PDF 通过 `pdf-extract` crate 解析，DOCX 通过 `docx-lite` crate 解析。EPUB/PDF 会按阅读顺序拆成内部页面文档。已支持词频统计、词形归一表、熟词过滤、额外忽略词过滤、出现次数筛选、频率比例筛选、文档覆盖筛选、覆盖率截断、Top N 筛选、专有名词候选过滤、例句提取、外部命令释义，以及 `txt`、`csv`、`json` 三种输出格式。
 
 ```bash
 cargo run -- analyze book.txt \
@@ -131,7 +131,7 @@ cargo run -- analyze book.txt \
   --output words.csv
 ```
 
-后续仍需要继续完善 docx、AZW3 等格式输入，以及更好的词形还原能力。
+后续仍需要继续完善 AZW3 等格式输入，以及更好的词形还原能力。
 
 这个只是这个工具的一个基本的 idea，代码以及工具的功能都需要不断的完善。
 如果大家对工具的功能方面，或是对帮助英文书籍阅读或学英语有其它建议，我们欢迎大家畅言。

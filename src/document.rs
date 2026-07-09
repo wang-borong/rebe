@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use docx_lite::extract_text;
 use epub_parser::Epub;
 use pdf_extract::extract_text_by_pages;
 
@@ -56,7 +57,7 @@ pub fn load_documents(input: &Path) -> RebeResult<Vec<Document>> {
 
     if paths.is_empty() {
         return Err(RebeError::InvalidArgument(format!(
-            "no supported text, EPUB, or PDF files found under directory: {}",
+            "no supported text, EPUB, PDF, or DOCX files found under directory: {}",
             input.display()
         )));
     }
@@ -75,6 +76,8 @@ fn load_document_file(path: &Path) -> RebeResult<Vec<Document>> {
         load_epub(path)
     } else if is_pdf_file(path) {
         load_pdf(path)
+    } else if is_docx_file(path) {
+        load_docx(path)
     } else if is_text_file(path) {
         Ok(vec![Document::load_txt(path)?])
     } else {
@@ -108,6 +111,17 @@ fn load_epub(path: &Path) -> RebeResult<Vec<Document>> {
     }
 
     Ok(documents)
+}
+
+fn load_docx(path: &Path) -> RebeResult<Vec<Document>> {
+    let content = extract_text(path).map_err(|err| {
+        RebeError::InvalidArgument(format!(
+            "failed to extract DOCX text {}: {err}",
+            path.display()
+        ))
+    })?;
+
+    Ok(vec![Document::from_content(path.to_path_buf(), content)?])
 }
 
 fn load_pdf(path: &Path) -> RebeResult<Vec<Document>> {
@@ -154,7 +168,7 @@ fn collect_document_paths(dir: &Path, paths: &mut Vec<PathBuf>) -> RebeResult<()
 }
 
 fn is_supported_document_file(path: &Path) -> bool {
-    is_text_file(path) || is_epub_file(path) || is_pdf_file(path)
+    is_text_file(path) || is_epub_file(path) || is_pdf_file(path) || is_docx_file(path)
 }
 
 fn is_text_file(path: &Path) -> bool {
@@ -175,6 +189,10 @@ fn is_epub_file(path: &Path) -> bool {
 
 fn is_pdf_file(path: &Path) -> bool {
     has_extension(path, "pdf")
+}
+
+fn is_docx_file(path: &Path) -> bool {
+    has_extension(path, "docx")
 }
 
 fn has_extension(path: &Path, expected: &str) -> bool {
@@ -286,6 +304,68 @@ mod tests {
 
         assert_eq!(documents.len(), 1);
         assert!(documents[0].content.contains("Readers read PDF books"));
+
+        fs::remove_dir_all(dir_path).ok();
+    }
+
+    #[test]
+    fn loads_minimal_docx_document() {
+        if Command::new("zip").arg("--version").output().is_err() {
+            return;
+        }
+
+        let dir_path = temp_dir_path("docx");
+        let staging_path = dir_path.join("staging");
+        let docx_path = dir_path.join("book.docx");
+
+        fs::create_dir_all(staging_path.join("_rels")).expect("create rels dir");
+        fs::create_dir_all(staging_path.join("word")).expect("create word dir");
+        fs::write(
+            staging_path.join("[Content_Types].xml"),
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>"#,
+        )
+        .expect("write content types");
+        fs::write(
+            staging_path.join("_rels").join(".rels"),
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>"#,
+        )
+        .expect("write rels");
+        fs::write(
+            staging_path.join("word").join("document.xml"),
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:r><w:t>Readers read DOCX books.</w:t></w:r></w:p>
+  </w:body>
+</w:document>"#,
+        )
+        .expect("write document");
+
+        let status = Command::new("zip")
+            .arg("-q")
+            .arg("-r")
+            .arg(&docx_path)
+            .arg("[Content_Types].xml")
+            .arg("_rels")
+            .arg("word")
+            .current_dir(&staging_path)
+            .status()
+            .expect("zip docx");
+
+        assert!(status.success());
+
+        let documents = load_documents(&docx_path).expect("load docx");
+
+        assert_eq!(documents.len(), 1);
+        assert!(documents[0].content.contains("Readers read DOCX books"));
 
         fs::remove_dir_all(dir_path).ok();
     }
