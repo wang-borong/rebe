@@ -41,12 +41,17 @@ USAGE:\n\
 OPTIONS:\n\
     -o, --output <PATH>       Write result to a file instead of stdout\n\
         --format <FORMAT>     Output format: txt, csv, json (default: txt)\n\
+        --lemma-map <PATH>    Lemma override file; supports 'surface lemma', 'surface=lemma', or 'surface,lemma'\n\
         --known <PATH>        Known words file; matched words are hidden\n\
         --ignore <PATH>       Extra ignored words file\n\
         --min-count <N>       Keep words appearing at least N times (default: 1)\n\
         --max-count <N>       Keep words appearing at most N times\n\
         --min-frequency <R>   Keep words with frequency >= R; accepts 0.05, 5, or 5%\n\
         --max-frequency <R>   Keep words with frequency <= R; accepts 0.05, 5, or 5%\n\
+        --min-doc-count <N>   Keep words appearing in at least N source files\n\
+        --max-doc-count <N>   Keep words appearing in at most N source files\n\
+        --min-doc-frequency <R> Keep words appearing in at least R of source files\n\
+        --max-doc-frequency <R> Keep words appearing in at most R of source files\n\
         --coverage <R>        Keep words until cumulative coverage reaches R\n\
         --top <N>             Keep only the first N words after sorting\n\
         --examples <N>        Examples per word from source text (default: 2)\n\
@@ -79,6 +84,9 @@ fn parse_analyze_args(args: Vec<String>) -> RebeResult<CliCommand> {
             "--format" => {
                 config.format = OutputFormat::parse(&next_value(&args, &mut index, arg)?)?;
             }
+            "--lemma-map" => {
+                config.lemma_map_path = Some(PathBuf::from(next_value(&args, &mut index, arg)?));
+            }
             "--known" => {
                 config.known_words_path = Some(PathBuf::from(next_value(&args, &mut index, arg)?));
             }
@@ -100,6 +108,26 @@ fn parse_analyze_args(args: Vec<String>) -> RebeResult<CliCommand> {
             }
             "--max-frequency" => {
                 config.max_frequency =
+                    Some(parse_ratio(&next_value(&args, &mut index, arg)?, arg)?);
+            }
+            "--min-doc-count" => {
+                config.min_document_count = Some(parse_positive_usize(
+                    &next_value(&args, &mut index, arg)?,
+                    arg,
+                )?);
+            }
+            "--max-doc-count" => {
+                config.max_document_count = Some(parse_positive_usize(
+                    &next_value(&args, &mut index, arg)?,
+                    arg,
+                )?);
+            }
+            "--min-doc-frequency" => {
+                config.min_document_frequency =
+                    Some(parse_ratio(&next_value(&args, &mut index, arg)?, arg)?);
+            }
+            "--max-doc-frequency" => {
+                config.max_document_frequency =
                     Some(parse_ratio(&next_value(&args, &mut index, arg)?, arg)?);
             }
             "--coverage" => {
@@ -343,5 +371,50 @@ mod tests {
 
         let err = parse_args(args).expect_err("definition command should require placeholder");
         assert!(err.to_string().contains("--define-command"));
+    }
+
+    #[test]
+    fn parses_lemma_and_document_filter_options() {
+        let args = vec![
+            "rebe".to_string(),
+            "articles".to_string(),
+            "--lemma-map".to_string(),
+            "lemma.txt".to_string(),
+            "--min-doc-count".to_string(),
+            "2".to_string(),
+            "--max-doc-count".to_string(),
+            "5".to_string(),
+            "--min-doc-frequency".to_string(),
+            "20%".to_string(),
+            "--max-doc-frequency".to_string(),
+            "0.8".to_string(),
+        ];
+
+        let command = parse_args(args).expect("parse args");
+        match command {
+            CliCommand::Analyze(config) => {
+                assert_eq!(config.lemma_map_path, Some(PathBuf::from("lemma.txt")));
+                assert_eq!(config.min_document_count, Some(2));
+                assert_eq!(config.max_document_count, Some(5));
+                assert_eq!(config.min_document_frequency, Some(0.2));
+                assert_eq!(config.max_document_frequency, Some(0.8));
+            }
+            CliCommand::Help => panic!("expected analyze command"),
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_document_count_range() {
+        let args = vec![
+            "rebe".to_string(),
+            "articles".to_string(),
+            "--min-doc-count".to_string(),
+            "3".to_string(),
+            "--max-doc-count".to_string(),
+            "2".to_string(),
+        ];
+
+        let err = parse_args(args).expect_err("invalid document count range should fail");
+        assert!(err.to_string().contains("--max-doc-count"));
     }
 }

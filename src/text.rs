@@ -1,3 +1,7 @@
+use std::collections::HashMap;
+
+pub type LemmaMap = HashMap<String, String>;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Token {
     pub surface: String,
@@ -40,6 +44,13 @@ pub fn tokenize_sentence(sentence: &str) -> Vec<String> {
 }
 
 pub fn tokenize_sentence_details(sentence: &str) -> Vec<Token> {
+    tokenize_sentence_details_with_lemma_map(sentence, &LemmaMap::new())
+}
+
+pub fn tokenize_sentence_details_with_lemma_map(
+    sentence: &str,
+    lemma_map: &LemmaMap,
+) -> Vec<Token> {
     let mut tokens = Vec::new();
     let mut current = String::new();
     let chars = sentence.chars().collect::<Vec<_>>();
@@ -53,13 +64,13 @@ pub fn tokenize_sentence_details(sentence: &str) -> Vec<Token> {
         } else if ch == '\'' && is_apostrophe_inside_word(&chars, index, &current) {
             current.push(ch);
         } else {
-            push_token(&mut tokens, &mut current);
+            push_token(&mut tokens, &mut current, lemma_map);
         }
 
         index += 1;
     }
 
-    push_token(&mut tokens, &mut current);
+    push_token(&mut tokens, &mut current, lemma_map);
     tokens
 }
 
@@ -82,7 +93,16 @@ pub fn clean_word(word: &str) -> Option<String> {
 }
 
 pub fn normalize_word(word: &str) -> Option<String> {
+    normalize_word_with_lemma_map(word, &LemmaMap::new())
+}
+
+pub fn normalize_word_with_lemma_map(word: &str, lemma_map: &LemmaMap) -> Option<String> {
     let cleaned = clean_word(word)?;
+
+    if let Some(lemma) = lemma_map.get(&cleaned) {
+        return Some(lemma.clone());
+    }
+
     Some(stem_word(&cleaned))
 }
 
@@ -152,9 +172,9 @@ fn push_sentence(sentences: &mut Vec<String>, current: &mut String) {
     current.clear();
 }
 
-fn push_token(tokens: &mut Vec<Token>, current: &mut String) {
+fn push_token(tokens: &mut Vec<Token>, current: &mut String, lemma_map: &LemmaMap) {
     if let Some(surface) = clean_word(current) {
-        if let Some(normalized) = normalize_word(&surface) {
+        if let Some(normalized) = normalize_word_with_lemma_map(&surface, lemma_map) {
             tokens.push(Token {
                 surface,
                 normalized,
@@ -202,5 +222,16 @@ mod tests {
         assert!(tokens[2].is_capitalized);
         assert_eq!(tokens[4].surface, "bob");
         assert!(!tokens[4].is_capitalized);
+    }
+
+    #[test]
+    fn lemma_map_overrides_default_normalization() {
+        let mut lemma_map = LemmaMap::new();
+        lemma_map.insert("children".to_string(), "child".to_string());
+
+        assert_eq!(
+            normalize_word_with_lemma_map("children", &lemma_map),
+            Some("child".to_string())
+        );
     }
 }

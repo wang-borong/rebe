@@ -44,14 +44,14 @@ fn render_txt(report: &AnalysisReport) -> String {
     writeln!(output).expect("write string");
     writeln!(
         output,
-        "word\tcount\tfrequency\tcoverage\tfirst_position\tsentences\tdocuments\tforms\tdefinition\texamples"
+        "word\tcount\tfrequency\tcoverage\tfirst_position\tsentences\tdocuments\tdocument_frequency\tforms\tdefinition\texamples"
     )
     .expect("write string");
 
     for word in &report.words {
         writeln!(
             output,
-            "{}\t{}\t{:.6}\t{:.6}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{:.6}\t{:.6}\t{}\t{}\t{}\t{:.6}\t{}\t{}\t{}",
             word.word,
             word.count,
             word.frequency,
@@ -59,6 +59,7 @@ fn render_txt(report: &AnalysisReport) -> String {
             word.first_position,
             word.sentence_count,
             word.document_count,
+            word.document_frequency,
             word.forms.join("|"),
             word.definition.as_deref().unwrap_or_default(),
             word.examples.join(" | ")
@@ -72,7 +73,7 @@ fn render_txt(report: &AnalysisReport) -> String {
 fn render_csv(report: &AnalysisReport) -> String {
     let mut output = String::new();
 
-    output.push_str("word,count,frequency,cumulative_coverage,first_position,sentence_count,document_count,forms,definition,examples\n");
+    output.push_str("word,count,frequency,cumulative_coverage,first_position,sentence_count,document_count,document_frequency,forms,definition,examples\n");
 
     for word in &report.words {
         let row = [
@@ -83,6 +84,7 @@ fn render_csv(report: &AnalysisReport) -> String {
             word.first_position.to_string(),
             word.sentence_count.to_string(),
             word.document_count.to_string(),
+            format!("{:.6}", word.document_frequency),
             word.forms.join("|"),
             word.definition.clone().unwrap_or_default(),
             word.examples.join(" | "),
@@ -140,6 +142,12 @@ fn render_json(report: &AnalysisReport) -> String {
             .expect("write string");
         writeln!(output, "      \"document_count\": {},", word.document_count)
             .expect("write string");
+        writeln!(
+            output,
+            "      \"document_frequency\": {:.6},",
+            word.document_frequency
+        )
+        .expect("write string");
         writeln!(
             output,
             "      \"forms\": {},",
@@ -265,6 +273,7 @@ mod tests {
                 first_position: 1,
                 sentence_count: 1,
                 document_count: 1,
+                document_frequency: 1.0,
                 definition: Some("to look at written words".to_string()),
                 examples: vec!["A sentence, with comma.".to_string()],
             }],

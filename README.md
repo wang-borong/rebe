@@ -80,7 +80,7 @@
 
 ## 当前 MVP 使用方式
 
-当前版本先实现文本分析核心，支持单个文本文件或目录输入。目录输入会递归读取 `.txt`、`.md`、`.markdown` 文件。已支持词频统计、熟词过滤、额外忽略词过滤、出现次数筛选、频率比例筛选、覆盖率截断、Top N 筛选、专有名词候选过滤、例句提取、外部命令释义，以及 `txt`、`csv`、`json` 三种输出格式。
+当前版本先实现文本分析核心，支持单个文本文件或目录输入。目录输入会递归读取 `.txt`、`.md`、`.markdown` 文件。已支持词频统计、词形归一表、熟词过滤、额外忽略词过滤、出现次数筛选、频率比例筛选、文档覆盖筛选、覆盖率截断、Top N 筛选、专有名词候选过滤、例句提取、外部命令释义，以及 `txt`、`csv`、`json` 三种输出格式。
 
 ```bash
 cargo run -- analyze book.txt \
@@ -94,8 +94,11 @@ cargo run -- analyze book.txt \
 
 - `--known <PATH>`：熟词表，每行一个词，统计结果会排除这些词。
 - `--ignore <PATH>`：额外忽略词表，每行一个词。
+- `--lemma-map <PATH>`：词形归一表，支持 `surface lemma`、`surface=lemma`、`surface,lemma` 三种写法。
 - `--min-count <N>` / `--max-count <N>`：按出现次数筛选词汇。
 - `--min-frequency <R>` / `--max-frequency <R>`：按词频比例筛选词汇，支持 `0.05`、`5`、`5%` 三种写法。
+- `--min-doc-count <N>` / `--max-doc-count <N>`：按出现的源文件数量筛选词汇。
+- `--min-doc-frequency <R>` / `--max-doc-frequency <R>`：按出现的源文件比例筛选词汇，支持 `0.5`、`50`、`50%` 三种写法。
 - `--coverage <R>`：按频率排序后，保留词汇直到累计覆盖率达到指定比例。
 - `--top <N>`：只输出排序后的前 N 个词。
 - `--examples <N>`：为每个词保留 N 个原文例句，默认 2 个。

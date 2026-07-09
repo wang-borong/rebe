@@ -36,12 +36,17 @@ pub struct AnalysisConfig {
     pub input: PathBuf,
     pub output: Option<PathBuf>,
     pub format: OutputFormat,
+    pub lemma_map_path: Option<PathBuf>,
     pub known_words_path: Option<PathBuf>,
     pub ignore_words_path: Option<PathBuf>,
     pub min_count: usize,
     pub max_count: Option<usize>,
     pub min_frequency: Option<f64>,
     pub max_frequency: Option<f64>,
+    pub min_document_count: Option<usize>,
+    pub max_document_count: Option<usize>,
+    pub min_document_frequency: Option<f64>,
+    pub max_document_frequency: Option<f64>,
     pub coverage_target: Option<f64>,
     pub top: Option<usize>,
     pub example_count: usize,
@@ -60,12 +65,17 @@ impl Default for AnalysisConfig {
             input: PathBuf::new(),
             output: None,
             format: OutputFormat::Txt,
+            lemma_map_path: None,
             known_words_path: None,
             ignore_words_path: None,
             min_count: 1,
             max_count: None,
             min_frequency: None,
             max_frequency: None,
+            min_document_count: None,
+            max_document_count: None,
+            min_document_frequency: None,
+            max_document_frequency: None,
             coverage_target: None,
             top: None,
             example_count: 2,
@@ -99,6 +109,27 @@ impl AnalysisConfig {
             if max_frequency < min_frequency {
                 return Err(RebeError::InvalidArgument(
                     "--max-frequency must be greater than or equal to --min-frequency".to_string(),
+                ));
+            }
+        }
+
+        if let (Some(min_count), Some(max_count)) =
+            (self.min_document_count, self.max_document_count)
+        {
+            if max_count < min_count {
+                return Err(RebeError::InvalidArgument(
+                    "--max-doc-count must be greater than or equal to --min-doc-count".to_string(),
+                ));
+            }
+        }
+
+        if let (Some(min_frequency), Some(max_frequency)) =
+            (self.min_document_frequency, self.max_document_frequency)
+        {
+            if max_frequency < min_frequency {
+                return Err(RebeError::InvalidArgument(
+                    "--max-doc-frequency must be greater than or equal to --min-doc-frequency"
+                        .to_string(),
                 ));
             }
         }
@@ -139,6 +170,7 @@ pub struct WordStat {
     pub first_position: usize,
     pub sentence_count: usize,
     pub document_count: usize,
+    pub document_frequency: f64,
     pub definition: Option<String>,
     pub examples: Vec<String>,
 }
@@ -163,18 +195,27 @@ pub fn analyze(config: &AnalysisConfig) -> RebeResult<AnalysisReport> {
         .iter()
         .map(|document| document.path.clone())
         .collect::<Vec<_>>();
-    let known_words = profile::load_word_set(config.known_words_path.as_deref())?;
-    let mut ignored_words = profile::load_word_set(config.ignore_words_path.as_deref())?;
+    let lemma_map = profile::load_lemma_map(config.lemma_map_path.as_deref())?;
+    let known_words =
+        profile::load_word_set_with_lemma_map(config.known_words_path.as_deref(), &lemma_map)?;
+    let mut ignored_words =
+        profile::load_word_set_with_lemma_map(config.ignore_words_path.as_deref(), &lemma_map)?;
 
     if config.ignore_common_words {
-        ignored_words.extend(profile::common_word_set());
+        ignored_words.extend(profile::common_word_set(&lemma_map));
     }
 
-    let raw_stats = collect_stats(&documents, config.example_count);
+    let raw_stats = collect_stats(&documents, config.example_count, &lemma_map);
     let total_words = raw_stats.values().map(|stat| stat.count).sum::<usize>();
     let unique_words = raw_stats.len();
-    let mut candidates =
-        build_candidates(raw_stats, total_words, &known_words, &ignored_words, config);
+    let mut candidates = build_candidates(
+        raw_stats,
+        total_words,
+        documents.len(),
+        &known_words,
+        &ignored_words,
+        config,
+    );
 
     sort_words(&mut candidates, config.sort);
     apply_cumulative_coverage(&mut candidates, total_words);
@@ -201,6 +242,7 @@ pub fn analyze(config: &AnalysisConfig) -> RebeResult<AnalysisReport> {
 fn collect_stats(
     documents: &[Document],
     example_count: usize,
+    lemma_map: &text::LemmaMap,
 ) -> BTreeMap<String, WordAccumulator> {
     let mut stats = BTreeMap::<String, WordAccumulator>::new();
     let mut position = 0;
@@ -208,7 +250,7 @@ fn collect_stats(
 
     for (document_index, document) in documents.iter().enumerate() {
         for sentence in &document.sentences {
-            let tokens = text::tokenize_sentence_details(sentence);
+            let tokens = text::tokenize_sentence_details_with_lemma_map(sentence, lemma_map);
 
             for (token_index, token) in tokens.into_iter().enumerate() {
                 position += 1;
@@ -250,6 +292,7 @@ fn collect_stats(
 fn build_candidates(
     raw_stats: BTreeMap<String, WordAccumulator>,
     total_words: usize,
+    total_documents: usize,
     known_words: &HashSet<String>,
     ignored_words: &HashSet<String>,
     config: &AnalysisConfig,
@@ -257,13 +300,26 @@ fn build_candidates(
     raw_stats
         .into_iter()
         .filter(|(word, stat)| {
-            should_keep_word(word, stat, total_words, known_words, ignored_words, config)
+            should_keep_word(
+                word,
+                stat,
+                total_words,
+                total_documents,
+                known_words,
+                ignored_words,
+                config,
+            )
         })
         .map(|(word, stat)| {
             let frequency = if total_words == 0 {
                 0.0
             } else {
                 stat.count as f64 / total_words as f64
+            };
+            let document_frequency = if total_documents == 0 {
+                0.0
+            } else {
+                stat.document_indexes.len() as f64 / total_documents as f64
             };
 
             WordStat {
@@ -275,6 +331,7 @@ fn build_candidates(
                 first_position: stat.first_position,
                 sentence_count: stat.sentence_indexes.len(),
                 document_count: stat.document_indexes.len(),
+                document_frequency,
                 definition: None,
                 examples: stat.examples,
             }
@@ -286,6 +343,7 @@ fn should_keep_word(
     word: &str,
     stat: &WordAccumulator,
     total_words: usize,
+    total_documents: usize,
     known_words: &HashSet<String>,
     ignored_words: &HashSet<String>,
     config: &AnalysisConfig,
@@ -323,6 +381,44 @@ fn should_keep_word(
     if config
         .max_frequency
         .map(|max_frequency| frequency > max_frequency)
+        .unwrap_or(false)
+    {
+        return false;
+    }
+
+    if config
+        .min_document_count
+        .map(|min_count| stat.document_indexes.len() < min_count)
+        .unwrap_or(false)
+    {
+        return false;
+    }
+
+    if config
+        .max_document_count
+        .map(|max_count| stat.document_indexes.len() > max_count)
+        .unwrap_or(false)
+    {
+        return false;
+    }
+
+    let document_frequency = if total_documents == 0 {
+        0.0
+    } else {
+        stat.document_indexes.len() as f64 / total_documents as f64
+    };
+
+    if config
+        .min_document_frequency
+        .map(|min_frequency| document_frequency < min_frequency)
+        .unwrap_or(false)
+    {
+        return false;
+    }
+
+    if config
+        .max_document_frequency
+        .map(|max_frequency| document_frequency > max_frequency)
         .unwrap_or(false)
     {
         return false;
@@ -519,6 +615,66 @@ mod tests {
         assert_eq!(report.total_words, 5);
         assert_eq!(target.count, 2);
         assert_eq!(target.document_count, 2);
+        assert_eq!(target.document_frequency, 1.0);
+
+        fs::remove_dir_all(dir_path).ok();
+    }
+
+    #[test]
+    fn applies_lemma_map_to_text_and_filters() {
+        let input_path = temp_file_path("lemma", "txt");
+        let lemma_path = temp_file_path("lemma_map", "txt");
+
+        fs::write(&input_path, "Children read. A child reads.").expect("write input");
+        fs::write(&lemma_path, "children child\nreads read\n").expect("write lemma map");
+
+        let config = AnalysisConfig {
+            input: input_path.clone(),
+            lemma_map_path: Some(lemma_path.clone()),
+            ignore_common_words: true,
+            ..AnalysisConfig::default()
+        };
+
+        let report = analyze(&config).expect("analyze");
+        let child = report
+            .words
+            .iter()
+            .find(|word| word.word == "child")
+            .expect("child lemma");
+        let read = report
+            .words
+            .iter()
+            .find(|word| word.word == "read")
+            .expect("read lemma");
+
+        assert_eq!(child.count, 2);
+        assert_eq!(read.count, 2);
+
+        fs::remove_file(input_path).ok();
+        fs::remove_file(lemma_path).ok();
+    }
+
+    #[test]
+    fn applies_document_count_filters() {
+        let dir_path = temp_dir_path("doc_filter");
+        fs::create_dir(&dir_path).expect("create dir");
+        fs::write(dir_path.join("a.txt"), "target alpha.").expect("write first file");
+        fs::write(dir_path.join("b.txt"), "target beta.").expect("write second file");
+        fs::write(dir_path.join("c.txt"), "gamma.").expect("write third file");
+
+        let config = AnalysisConfig {
+            input: dir_path.clone(),
+            min_document_count: Some(2),
+            ignore_common_words: false,
+            ..AnalysisConfig::default()
+        };
+
+        let report = analyze(&config).expect("analyze");
+
+        assert_eq!(report.words.len(), 1);
+        assert_eq!(report.words[0].word, "target");
+        assert_eq!(report.words[0].document_count, 2);
+        assert!((report.words[0].document_frequency - (2.0 / 3.0)).abs() < f64::EPSILON);
 
         fs::remove_dir_all(dir_path).ok();
     }
