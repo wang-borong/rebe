@@ -71,7 +71,7 @@
 
 该工具待开发功能如下。
 
-1. 支持 txt、PDF、EPUB 和 AWZ3 等格式输入（如果可以支持 word 文档）。
+1. 支持 txt、PDF、EPUB 和 AZW3 等格式输入（如果可以支持 word 文档）。
 2. 能够按照读者的输入频率范围，统计书中出现的词汇。
 3. 工具可以输出普通文本格式和 CSV 表格模式等（如果可以，生成 mdd 词典格式）。
 4. 能够屏蔽读者预先设置的熟词，即熟词不出现在统计结果中。
@@ -80,7 +80,7 @@
 
 ## 当前 MVP 使用方式
 
-当前版本先实现文本分析核心，支持单个文本文件、EPUB、PDF、DOCX 或目录输入。目录输入会递归读取 `.txt`、`.md`、`.markdown`、`.epub`、`.pdf`、`.docx` 文件。EPUB 通过 `epub-parser` crate 解析，PDF 通过 `pdf-extract` crate 解析，DOCX 通过 `docx-lite` crate 解析。EPUB/PDF 会按阅读顺序拆成内部页面文档。已支持词频统计、词形归一表、熟词过滤、额外忽略词过滤、出现次数筛选、频率比例筛选、文档覆盖筛选、覆盖率截断、Top N 筛选、专有名词候选过滤、例句提取、外部命令释义，以及 `txt`、`csv`、`json` 三种输出格式。
+当前版本先实现文本分析核心，支持单个文本文件、EPUB、PDF、DOCX、Kindle 文件或目录输入。目录输入会递归读取 `.txt`、`.md`、`.markdown`、`.epub`、`.pdf`、`.docx`、`.azw3`、`.azw`、`.mobi`、`.kfx` 文件。EPUB 通过 `epub-parser` crate 解析，PDF 通过 `pdf-extract` crate 解析，DOCX 通过 `docx-lite` crate 解析，Kindle 格式通过 `boko` crate 解析为 Markdown 后进入同一文本分析流程，仅支持非 DRM 文件。EPUB/PDF 会按阅读顺序拆成内部页面文档。已支持词频统计、词形归一表、熟词过滤、额外忽略词过滤、出现次数筛选、频率比例筛选、文档覆盖筛选、覆盖率截断、Top N 筛选、专有名词候选过滤、例句提取、外部命令释义，以及 `txt`、`csv`、`json` 三种输出格式。
 
 ```bash
 cargo run -- analyze book.txt \
@@ -109,7 +109,7 @@ cargo run -- analyze book.txt \
 - `--include-common`：保留内置常见功能词；默认会过滤 `the`、`and`、`of` 等常见功能词。
 - `--include-proper-nouns`：保留候选专有名词；默认会过滤只在非句首大写出现的词。
 
-输出字段包含每个词的源文档分布：`sources` 会记录该词在哪些文本文件或 EPUB 页面中出现，以及各自出现次数。
+输出字段包含每个词的源文档分布：`sources` 会记录该词在哪些文本文件、EPUB/PDF 页面或电子书中出现，以及各自出现次数。
 
 释义功能不绑定某个词典服务。可以用有道、其它网络词典 API，或本地脚本做一层 wrapper，然后交给 `--define-command` 调用。例如：
 
@@ -131,7 +131,7 @@ cargo run -- analyze book.txt \
   --output words.csv
 ```
 
-后续仍需要继续完善 AZW3 等格式输入，以及更好的词形还原能力。
+后续仍需要继续完善网络词典 wrapper、真实公开语料 fixture，以及更好的词形还原能力。
 
 这个只是这个工具的一个基本的 idea，代码以及工具的功能都需要不断的完善。
 如果大家对工具的功能方面，或是对帮助英文书籍阅读或学英语有其它建议，我们欢迎大家畅言。

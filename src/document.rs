@@ -1,6 +1,8 @@
 use std::fs;
+use std::io::{self, Cursor};
 use std::path::{Path, PathBuf};
 
+use boko::{Book, Format};
 use docx_lite::extract_text;
 use epub_parser::Epub;
 use pdf_extract::extract_text_by_pages;
@@ -57,7 +59,7 @@ pub fn load_documents(input: &Path) -> RebeResult<Vec<Document>> {
 
     if paths.is_empty() {
         return Err(RebeError::InvalidArgument(format!(
-            "no supported text, EPUB, PDF, or DOCX files found under directory: {}",
+            "no supported text, EPUB, PDF, DOCX, or Kindle files found under directory: {}",
             input.display()
         )));
     }
@@ -78,6 +80,8 @@ fn load_document_file(path: &Path) -> RebeResult<Vec<Document>> {
         load_pdf(path)
     } else if is_docx_file(path) {
         load_docx(path)
+    } else if is_kindle_file(path) {
+        load_kindle(path)
     } else if is_text_file(path) {
         Ok(vec![Document::load_txt(path)?])
     } else {
@@ -152,6 +156,57 @@ fn load_pdf(path: &Path) -> RebeResult<Vec<Document>> {
     Ok(documents)
 }
 
+fn load_kindle(path: &Path) -> RebeResult<Vec<Document>> {
+    let mut errors = Vec::new();
+
+    for format in kindle_formats(path) {
+        match extract_kindle_markdown(path, format) {
+            Ok(content) if !content.trim().is_empty() => {
+                return Ok(vec![Document::from_content(path.to_path_buf(), content)?]);
+            }
+            Ok(_) => {
+                errors.push(format!("{format:?}: no readable text"));
+            }
+            Err(err) => {
+                errors.push(format!("{format:?}: {err}"));
+            }
+        }
+    }
+
+    let details = if errors.is_empty() {
+        "no matching Kindle parser was selected".to_string()
+    } else {
+        errors.join("; ")
+    };
+
+    Err(RebeError::InvalidArgument(format!(
+        "failed to extract Kindle text {}: {details}. Only non-DRM AZW3/AZW/MOBI/KFX files are supported",
+        path.display()
+    )))
+}
+
+fn extract_kindle_markdown(path: &Path, format: Format) -> io::Result<String> {
+    let mut book = Book::open_format(path, format)?;
+    let mut output = Cursor::new(Vec::new());
+    book.export(Format::Markdown, &mut output)?;
+    String::from_utf8(output.into_inner()).map_err(|err| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("exported Markdown is not valid UTF-8: {err}"),
+        )
+    })
+}
+
+fn kindle_formats(path: &Path) -> Vec<Format> {
+    match normalized_extension(path).as_deref() {
+        Some("azw3") => vec![Format::Azw3],
+        Some("azw") => vec![Format::Azw3, Format::Mobi],
+        Some("mobi") => vec![Format::Mobi],
+        Some("kfx") => vec![Format::Kfx],
+        _ => Vec::new(),
+    }
+}
+
 fn collect_document_paths(dir: &Path, paths: &mut Vec<PathBuf>) -> RebeResult<()> {
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
@@ -168,19 +223,18 @@ fn collect_document_paths(dir: &Path, paths: &mut Vec<PathBuf>) -> RebeResult<()
 }
 
 fn is_supported_document_file(path: &Path) -> bool {
-    is_text_file(path) || is_epub_file(path) || is_pdf_file(path) || is_docx_file(path)
+    is_text_file(path)
+        || is_epub_file(path)
+        || is_pdf_file(path)
+        || is_docx_file(path)
+        || is_kindle_file(path)
 }
 
 fn is_text_file(path: &Path) -> bool {
-    path.extension()
-        .and_then(|extension| extension.to_str())
-        .map(|extension| {
-            matches!(
-                extension.to_ascii_lowercase().as_str(),
-                "txt" | "md" | "markdown"
-            )
-        })
-        .unwrap_or(false)
+    matches!(
+        normalized_extension(path).as_deref(),
+        Some("txt" | "md" | "markdown")
+    )
 }
 
 fn is_epub_file(path: &Path) -> bool {
@@ -195,11 +249,23 @@ fn is_docx_file(path: &Path) -> bool {
     has_extension(path, "docx")
 }
 
+fn is_kindle_file(path: &Path) -> bool {
+    matches!(
+        normalized_extension(path).as_deref(),
+        Some("azw3" | "azw" | "mobi" | "kfx")
+    )
+}
+
 fn has_extension(path: &Path, expected: &str) -> bool {
+    normalized_extension(path)
+        .map(|extension| extension == expected)
+        .unwrap_or(false)
+}
+
+fn normalized_extension(path: &Path) -> Option<String> {
     path.extension()
         .and_then(|extension| extension.to_str())
-        .map(|extension| extension.eq_ignore_ascii_case(expected))
-        .unwrap_or(false)
+        .map(|extension| extension.to_ascii_lowercase())
 }
 
 #[cfg(test)]
@@ -229,60 +295,9 @@ mod tests {
         }
 
         let dir_path = temp_dir_path("epub");
-        let staging_path = dir_path.join("staging");
         let epub_path = dir_path.join("book.epub");
 
-        fs::create_dir_all(staging_path.join("META-INF")).expect("create meta dir");
-        fs::create_dir_all(staging_path.join("OEBPS")).expect("create oebps dir");
-        fs::write(staging_path.join("mimetype"), "application/epub+zip").expect("write mimetype");
-        fs::write(
-            staging_path.join("META-INF").join("container.xml"),
-            r#"<?xml version="1.0" encoding="UTF-8"?>
-<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
-  <rootfiles>
-    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
-  </rootfiles>
-</container>"#,
-        )
-        .expect("write container");
-        fs::write(
-            staging_path.join("OEBPS").join("content.opf"),
-            r#"<?xml version="1.0" encoding="UTF-8"?>
-<package version="3.0" xmlns="http://www.idpf.org/2007/opf">
-  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
-    <dc:title>Fixture</dc:title>
-    <dc:language>en</dc:language>
-  </metadata>
-  <manifest>
-    <item id="chap1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>
-  </manifest>
-  <spine>
-    <itemref idref="chap1"/>
-  </spine>
-</package>"#,
-        )
-        .expect("write opf");
-        fs::write(
-            staging_path.join("OEBPS").join("chapter1.xhtml"),
-            r#"<?xml version="1.0" encoding="UTF-8"?>
-<html xmlns="http://www.w3.org/1999/xhtml">
-  <body><p>Readers read EPUB books.</p></body>
-</html>"#,
-        )
-        .expect("write chapter");
-
-        let status = Command::new("zip")
-            .arg("-q")
-            .arg("-r")
-            .arg(&epub_path)
-            .arg("mimetype")
-            .arg("META-INF")
-            .arg("OEBPS")
-            .current_dir(&staging_path)
-            .status()
-            .expect("zip epub");
-
-        assert!(status.success());
+        write_minimal_epub(&epub_path, "Readers read EPUB books.").expect("write epub fixture");
 
         let documents = load_documents(&epub_path).expect("load epub");
 
@@ -290,6 +305,40 @@ mod tests {
         assert!(documents[0].content.contains("Readers read EPUB books"));
 
         fs::remove_dir_all(dir_path).ok();
+    }
+
+    #[test]
+    fn loads_generated_azw3_document() {
+        if Command::new("zip").arg("--version").output().is_err() {
+            return;
+        }
+
+        let dir_path = temp_dir_path("azw3");
+        let epub_path = dir_path.join("book.epub");
+        let azw3_path = dir_path.join("book.azw3");
+
+        write_minimal_epub(&epub_path, "Readers read AZW3 books.").expect("write epub fixture");
+
+        let mut book = Book::open(&epub_path).expect("open epub with boko");
+        let mut output = Cursor::new(Vec::new());
+        book.export(Format::Azw3, &mut output)
+            .expect("export azw3 fixture");
+        fs::write(&azw3_path, output.into_inner()).expect("write azw3");
+
+        let documents = load_documents(&azw3_path).expect("load azw3");
+
+        assert_eq!(documents.len(), 1);
+        assert!(documents[0].content.contains("Readers read AZW3 books"));
+
+        fs::remove_dir_all(dir_path).ok();
+    }
+
+    #[test]
+    fn recognizes_kindle_document_extensions() {
+        assert!(is_supported_document_file(Path::new("book.AZW3")));
+        assert!(is_supported_document_file(Path::new("book.azw")));
+        assert!(is_supported_document_file(Path::new("book.mobi")));
+        assert!(is_supported_document_file(Path::new("book.kfx")));
     }
 
     #[test]
@@ -413,6 +462,70 @@ mod tests {
         text.replace('\\', "\\\\")
             .replace('(', "\\(")
             .replace(')', "\\)")
+    }
+
+    fn write_minimal_epub(path: &Path, text: &str) -> io::Result<()> {
+        let staging_path = path
+            .parent()
+            .expect("epub parent")
+            .join("staging")
+            .join(path.file_stem().expect("epub file stem"));
+
+        fs::create_dir_all(staging_path.join("META-INF"))?;
+        fs::create_dir_all(staging_path.join("OEBPS"))?;
+        fs::write(staging_path.join("mimetype"), "application/epub+zip")?;
+        fs::write(
+            staging_path.join("META-INF").join("container.xml"),
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>"#,
+        )?;
+        fs::write(
+            staging_path.join("OEBPS").join("content.opf"),
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<package version="3.0" unique-identifier="bookid" xmlns="http://www.idpf.org/2007/opf">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="bookid">urn:uuid:rebe-fixture</dc:identifier>
+    <dc:title>Fixture</dc:title>
+    <dc:language>en</dc:language>
+  </metadata>
+  <manifest>
+    <item id="chap1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine>
+    <itemref idref="chap1"/>
+  </spine>
+</package>"#,
+        )?;
+        fs::write(
+            staging_path.join("OEBPS").join("chapter1.xhtml"),
+            format!(
+                r#"<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <body><p>{}</p></body>
+</html>"#,
+                text
+            ),
+        )?;
+
+        let status = Command::new("zip")
+            .arg("-q")
+            .arg("-r")
+            .arg(path)
+            .arg("mimetype")
+            .arg("META-INF")
+            .arg("OEBPS")
+            .current_dir(&staging_path)
+            .status()?;
+
+        if !status.success() {
+            return Err(io::Error::other("failed to zip EPUB fixture"));
+        }
+
+        Ok(())
     }
 
     fn temp_dir_path(name: &str) -> PathBuf {
