@@ -1,6 +1,6 @@
 [package]
 name = "rebe"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2021"
 authors = ["Jason Wang <wang_borong@163.com>"]
 description = "Prepare English reading with focused vocabulary reports from books and article corpora"
@@ -15,6 +15,8 @@ categories = ["command-line-utilities", "text-processing"]
 
 [dependencies]
 boko = { version = "0.3.0", default-features = false }
+clap = { version = "4.5", features = ["derive"] }
+clap_complete = "4.5"
 docx-lite = "0.2.0"
 epub-parser = "0.3.4"
 html2text = "0.17.1"

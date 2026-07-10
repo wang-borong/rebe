@@ -162,6 +162,22 @@ rebe analyze book.txt --define-mdx /path/to/dictionary.mdx \
   --mdx-definition-format html --format json -o vocabulary.json
 ```
 
+## Shell Completion
+
+Generate a completion script with the built-in `completions` command. The
+supported shells are `bash`, `elvish`, `fish`, `powershell`, and `zsh`.
+
+```bash
+# Load Bash completion in the current shell.
+source <(rebe completions bash)
+
+# Install Fish completion for the current user.
+rebe completions fish > ~/.config/fish/completions/rebe.fish
+
+# Generate a Zsh completion file.
+rebe completions zsh > _rebe
+```
+
 ## Limitations
 
 - DRM-protected Kindle books are intentionally unsupported.
