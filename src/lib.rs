@@ -37,5 +37,38 @@ where
 
             Ok(())
         }
+        CliCommand::ProfileInit { path, force } => {
+            profile::init_user_profile(&path, force)?;
+            println!("Wrote profile: {}", path.display());
+            Ok(())
+        }
+        CliCommand::ProfileAddKnown { path, words } => {
+            let added_count = profile::append_known_words(&path, &words)?;
+
+            if added_count == 0 {
+                println!("No new known words: {}", path.display());
+            } else {
+                println!(
+                    "Added {added_count} known word(s) to profile: {}",
+                    path.display()
+                );
+            }
+
+            Ok(())
+        }
+        CliCommand::ProfileAddIgnore { path, words } => {
+            let added_count = profile::append_ignored_words(&path, &words)?;
+
+            if added_count == 0 {
+                println!("No new ignored words: {}", path.display());
+            } else {
+                println!(
+                    "Added {added_count} ignored word(s) to profile: {}",
+                    path.display()
+                );
+            }
+
+            Ok(())
+        }
     }
 }

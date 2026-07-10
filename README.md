@@ -94,7 +94,7 @@ cargo run -- analyze book.txt \
 
 - `--known <PATH>`：熟词表，每行一个词，统计结果会排除这些词。
 - `--ignore <PATH>`：额外忽略词表，每行一个词。
-- `--profile <PATH>`：用户 profile 文件，可以在一个文件中维护 `[known]`、`[ignore]`、`[lemma]` 三段配置。
+- `--profile <PATH>`：用户 profile 文件，可以在一个文件中维护 `[known]`、`[ignore]`、`[lemma]`、`[defaults]` 配置。
 - `--lemma-map <PATH>`：词形归一表，支持 `surface lemma`、`surface=lemma`、`surface,lemma` 三种写法。
 - `--min-count <N>` / `--max-count <N>`：按出现次数筛选词汇。
 - `--min-frequency <R>` / `--max-frequency <R>`：按词频比例筛选词汇，支持 `0.05`、`5`、`5%` 三种写法。
@@ -114,7 +114,9 @@ cargo run -- analyze book.txt \
 - `--definition-max-chars <N>`：限制每个释义的最大字符数，默认 600；设置为 0 表示不截断。
 - `--format txt|csv|json`：选择输出格式。
 - `--include-common`：保留内置常见功能词；默认会过滤 `the`、`and`、`of` 等常见功能词。
+- `--ignore-common`：过滤内置常见功能词；用于覆盖 profile 中的 `include-common = true`。
 - `--include-proper-nouns`：保留候选专有名词；默认会过滤只在非句首大写出现的词。
+- `--ignore-proper-nouns`：过滤候选专有名词；用于覆盖 profile 中的 `include-proper-nouns = true`。
 
 输出字段包含每个词的源文档分布：`sources` 会记录该词在哪些文本文件、EPUB/PDF 页面或电子书中出现，以及各自出现次数。
 
@@ -132,6 +134,13 @@ bob
 [lemma]
 mice = mouse
 went go
+
+[defaults]
+min-count = 2
+format = csv
+definition-max-chars = 600
+# define-mdx = /path/to/dictionary.mdx
+# mdx-definition-format = plain
 ```
 
 使用时：
@@ -144,7 +153,31 @@ cargo run -- analyze book.txt \
   --output words.csv
 ```
 
-`--known`、`--ignore`、`--lemma-map` 仍然可以和 `--profile` 叠加使用；其中单独传入的 `--lemma-map` 会覆盖 profile 中同名的 lemma 规则。
+新建自己的 profile 可以使用：
+
+```bash
+cargo run -- profile init ~/.config/rebe/profile.ini
+```
+
+如果目标文件已存在，命令会拒绝覆盖；确实需要重建模板时使用 `--force`。
+
+阅读后把已经掌握的词追加到 profile 熟词表：
+
+```bash
+cargo run -- profile add-known ~/.config/rebe/profile.ini reader "finished books"
+```
+
+该命令会跳过 profile 中已经存在的熟词，并在文件末尾追加新的 `[known]` 段，不会重写已有注释和排版。
+
+把专有名词或项目术语追加到 profile 忽略词表：
+
+```bash
+cargo run -- profile add-ignore ~/.config/rebe/profile.ini Alice "project terms"
+```
+
+该命令会跳过 profile 中已经存在的忽略词，并在文件末尾追加新的 `[ignore]` 段，不会重写已有注释和排版。
+
+`--known`、`--ignore`、`--lemma-map` 仍然可以和 `--profile` 叠加使用；其中单独传入的 `--lemma-map` 会覆盖 profile 中同名的 lemma 规则。`[defaults]` 支持常用筛选、排序、输出格式和释义相关默认值，例如 `min-count`、`max-count`、`min-frequency`、`coverage`、`top`、`sort`、`format`、`define-mdx`、`mdx-definition-format`、`definition-limit`、`definition-timeout-ms`、`definition-max-chars`。命令行显式传入的参数会覆盖 profile 默认值。
 
 内置有道 API 用法：
 
