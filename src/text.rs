@@ -68,9 +68,9 @@ pub fn tokenize_sentence_details_with_lemma_map(
     while index < chars.len() {
         let ch = chars[index];
 
-        if ch.is_ascii_alphabetic() {
-            current.push(ch);
-        } else if ch == '\'' && is_apostrophe_inside_word(&chars, index, &current) {
+        if ch.is_ascii_alphabetic()
+            || (ch == '\'' && is_apostrophe_inside_word(&chars, index, &current))
+        {
             current.push(ch);
         } else {
             push_token(&mut tokens, &mut current, lemma_map);

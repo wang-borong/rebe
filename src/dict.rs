@@ -22,7 +22,7 @@ const COPYTRANSLATOR_YOUDAO_APP_SECRET_ENV: &str = "VUE_APP_YOUDAO_APP_SECRET";
 pub enum DefinitionProvider {
     Command(DefinitionCommand),
     Youdao(YoudaoDefinitionClient),
-    Mdx(MdxDefinitionClient),
+    Mdx(Box<MdxDefinitionClient>),
 }
 
 impl DefinitionProvider {

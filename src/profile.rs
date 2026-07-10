@@ -187,7 +187,7 @@ impl ProfileWordSection {
         }
     }
 
-    fn words<'a>(self, profile: &'a UserProfile) -> &'a [String] {
+    fn words(self, profile: &UserProfile) -> &[String] {
         match self {
             Self::Known => &profile.known_words,
             Self::Ignore => &profile.ignored_words,

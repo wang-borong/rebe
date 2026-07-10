@@ -8,7 +8,7 @@ use crate::profile;
 
 #[derive(Debug, Clone)]
 pub enum CliCommand {
-    Analyze(AnalysisConfig),
+    Analyze(Box<AnalysisConfig>),
     ProfileInit { path: PathBuf, force: bool },
     ProfileAddKnown { path: PathBuf, words: Vec<String> },
     ProfileAddIgnore { path: PathBuf, words: Vec<String> },
@@ -386,7 +386,7 @@ fn parse_analyze_args(args: Vec<String>) -> RebeResult<CliCommand> {
         input.ok_or_else(|| RebeError::InvalidArgument("missing input file".to_string()))?;
     config.validate()?;
 
-    Ok(CliCommand::Analyze(config))
+    Ok(CliCommand::Analyze(Box::new(config)))
 }
 
 fn find_profile_path(args: &[String]) -> RebeResult<Option<PathBuf>> {

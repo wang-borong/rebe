@@ -618,11 +618,13 @@ fn definition_provider(config: &AnalysisConfig) -> RebeResult<Option<DefinitionP
     }
 
     if let Some(path) = &config.define_mdx_path {
-        return Ok(Some(DefinitionProvider::Mdx(MdxDefinitionClient::open(
-            path,
-            config.definition_max_chars,
-            config.mdx_definition_format,
-        )?)));
+        return Ok(Some(DefinitionProvider::Mdx(Box::new(
+            MdxDefinitionClient::open(
+                path,
+                config.definition_max_chars,
+                config.mdx_definition_format,
+            )?,
+        ))));
     }
 
     Ok(None)
