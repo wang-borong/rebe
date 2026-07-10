@@ -60,7 +60,7 @@ jobs:
           - os: ubuntu-latest
             asset: linux-x86_64
             binary: rebe
-          - os: macos-13
+          - os: macos-15-intel
             asset: macos-x86_64
             binary: rebe
           - os: windows-latest

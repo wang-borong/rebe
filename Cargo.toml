@@ -1,6 +1,6 @@
 [package]
 name = "rebe"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["Jason Wang <wang_borong@163.com>"]
 description = "Prepare English reading with focused vocabulary reports from books and article corpora"
