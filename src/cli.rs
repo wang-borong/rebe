@@ -55,7 +55,7 @@ OPTIONS:\n\
     -o, --output <PATH>       Write result to a file instead of stdout\n\
         --format <FORMAT>     Output format: txt, csv, json (default: txt)\n\
         --profile <PATH>      User profile with [known], [ignore], [lemma], and [defaults] sections\n\
-        --lemma-map <PATH>    Lemma override file; supports 'surface lemma', 'surface=lemma', or 'surface,lemma'\n\
+        --lemma-map <PATH>    Lemma overrides before built-in WordNet lemmatization\n\
         --known <PATH>        Known words file; matched words are hidden\n\
         --ignore <PATH>       Extra ignored words file\n\
         --min-count <N>       Keep words appearing at least N times (default: 1)\n\

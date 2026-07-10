@@ -1244,6 +1244,7 @@ dependencies = [
  "html2text",
  "mdict-rs",
  "pdf-extract",
+ "quick-xml 0.36.2",
  "serde_json",
  "sha2",
  "ureq",

@@ -1,11 +1,14 @@
+use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Cursor};
 use std::path::{Path, PathBuf};
 
 use boko::{Book, Format};
 use docx_lite::extract_text;
-use epub_parser::Epub;
+use epub_parser::{Epub, TocEntry, ZipHandler};
 use pdf_extract::extract_text_by_pages;
+use quick_xml::events::Event;
+use quick_xml::Reader;
 
 use crate::error::{RebeError, RebeResult};
 use crate::text;
@@ -15,6 +18,18 @@ pub struct Document {
     pub path: PathBuf,
     pub content: String,
     pub sentences: Vec<String>,
+}
+
+#[derive(Debug)]
+struct EpubManifestItem {
+    href: String,
+    media_type: String,
+}
+
+#[derive(Debug)]
+struct EpubLayout {
+    spine_paths: Vec<String>,
+    ncx_path: Option<String>,
 }
 
 impl Document {
@@ -96,6 +111,7 @@ fn load_epub(path: &Path) -> RebeResult<Vec<Document>> {
     let epub = Epub::parse(path).map_err(|err| {
         RebeError::InvalidArgument(format!("failed to parse EPUB {}: {err}", path.display()))
     })?;
+    let chapter_labels = load_epub_chapter_labels(path, &epub);
     let mut documents = Vec::new();
 
     for page in epub.pages {
@@ -103,7 +119,10 @@ fn load_epub(path: &Path) -> RebeResult<Vec<Document>> {
             continue;
         }
 
-        let page_path = PathBuf::from(format!("{}#page-{}", path.display(), page.index + 1));
+        let chapter_label = chapter_labels
+            .get(page.index)
+            .and_then(|label| label.as_deref());
+        let page_path = epub_page_path(path, page.index, chapter_label);
         documents.push(Document::from_content(page_path, page.content)?);
     }
 
@@ -115,6 +134,214 @@ fn load_epub(path: &Path) -> RebeResult<Vec<Document>> {
     }
 
     Ok(documents)
+}
+
+fn load_epub_chapter_labels(path: &Path, epub: &Epub) -> Vec<Option<String>> {
+    let fallback = vec![None; epub.pages.len()];
+    let Some(layout) = load_epub_layout(path) else {
+        return fallback;
+    };
+    let Some(ncx_path) = layout.ncx_path else {
+        return fallback;
+    };
+
+    if layout.spine_paths.len() != epub.pages.len() {
+        return fallback;
+    }
+
+    let labels_by_path = toc_labels_by_path(&epub.toc, &ncx_path);
+
+    layout
+        .spine_paths
+        .into_iter()
+        .map(|spine_path| labels_by_path.get(&spine_path).cloned())
+        .collect()
+}
+
+fn load_epub_layout(path: &Path) -> Option<EpubLayout> {
+    let mut zip_handler = ZipHandler::new(path).ok()?;
+    let opf_path = zip_handler.get_opf_path().ok()?;
+    let opf_content = zip_handler.read_file(&opf_path).ok()?;
+
+    parse_epub_layout(&opf_content, &opf_path)
+}
+
+fn parse_epub_layout(opf_content: &str, opf_path: &str) -> Option<EpubLayout> {
+    let mut reader = Reader::from_str(opf_content);
+    let mut manifest = HashMap::new();
+    let mut spine_ids = Vec::new();
+    let mut buffer = Vec::new();
+
+    loop {
+        match reader.read_event_into(&mut buffer) {
+            Ok(Event::Empty(element)) | Ok(Event::Start(element)) => {
+                let name = String::from_utf8_lossy(element.name().as_ref()).into_owned();
+
+                if xml_element_name_matches(&name, "item") {
+                    let mut id = None;
+                    let mut href = None;
+                    let mut media_type = None;
+
+                    for attribute in element.attributes() {
+                        let Ok(attribute) = attribute else {
+                            continue;
+                        };
+                        let attribute_name = String::from_utf8_lossy(attribute.key.as_ref());
+                        let Ok(value) = attribute.decode_and_unescape_value(reader.decoder())
+                        else {
+                            continue;
+                        };
+
+                        match xml_local_name(&attribute_name) {
+                            "id" => id = Some(value.into_owned()),
+                            "href" => href = Some(value.into_owned()),
+                            "media-type" => media_type = Some(value.into_owned()),
+                            _ => {}
+                        }
+                    }
+
+                    if let (Some(id), Some(href), Some(media_type)) = (id, href, media_type) {
+                        manifest.insert(id, EpubManifestItem { href, media_type });
+                    }
+                } else if xml_element_name_matches(&name, "itemref") {
+                    for attribute in element.attributes() {
+                        let Ok(attribute) = attribute else {
+                            continue;
+                        };
+                        let attribute_name = String::from_utf8_lossy(attribute.key.as_ref());
+
+                        if xml_local_name(&attribute_name) != "idref" {
+                            continue;
+                        }
+
+                        if let Ok(value) = attribute.decode_and_unescape_value(reader.decoder()) {
+                            spine_ids.push(value.into_owned());
+                        }
+
+                        break;
+                    }
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(_) => return None,
+            _ => {}
+        }
+
+        buffer.clear();
+    }
+
+    let spine_paths = spine_ids
+        .iter()
+        .filter_map(|id| manifest.get(id))
+        .filter_map(|item| resolve_epub_archive_path(opf_path, &item.href))
+        .collect::<Vec<_>>();
+    let ncx_path = manifest
+        .values()
+        .find(|item| {
+            item.media_type
+                .eq_ignore_ascii_case("application/x-dtbncx+xml")
+        })
+        .and_then(|item| resolve_epub_archive_path(opf_path, &item.href));
+
+    if spine_paths.is_empty() {
+        return None;
+    }
+
+    Some(EpubLayout {
+        spine_paths,
+        ncx_path,
+    })
+}
+
+fn toc_labels_by_path(toc: &[TocEntry], ncx_path: &str) -> HashMap<String, String> {
+    let mut labels_by_path = HashMap::new();
+
+    collect_toc_labels(toc, ncx_path, &mut labels_by_path);
+
+    labels_by_path
+}
+
+fn collect_toc_labels(
+    entries: &[TocEntry],
+    ncx_path: &str,
+    labels_by_path: &mut HashMap<String, String>,
+) {
+    for entry in entries {
+        if let (Some(path), Some(label)) = (
+            resolve_epub_archive_path(ncx_path, &entry.href),
+            normalize_epub_chapter_label(&entry.label),
+        ) {
+            labels_by_path.entry(path).or_insert(label);
+        }
+
+        collect_toc_labels(&entry.children, ncx_path, labels_by_path);
+    }
+}
+
+fn resolve_epub_archive_path(base_path: &str, href: &str) -> Option<String> {
+    let href = href.split('#').next()?.trim();
+
+    if href.is_empty() {
+        return None;
+    }
+
+    let mut components = if href.starts_with('/') {
+        Vec::new()
+    } else {
+        base_path
+            .split('/')
+            .filter(|component| !component.is_empty())
+            .collect::<Vec<_>>()
+    };
+
+    if !href.starts_with('/') {
+        components.pop();
+    }
+
+    for component in href.split('/') {
+        match component {
+            "" | "." => {}
+            ".." => {
+                components.pop();
+            }
+            _ => components.push(component),
+        }
+    }
+
+    if components.is_empty() {
+        return None;
+    }
+
+    Some(components.join("/"))
+}
+
+fn normalize_epub_chapter_label(label: &str) -> Option<String> {
+    let label = label.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    if label.is_empty() {
+        None
+    } else {
+        Some(label)
+    }
+}
+
+fn epub_page_path(path: &Path, page_index: usize, chapter_label: Option<&str>) -> PathBuf {
+    match chapter_label {
+        Some(label) => PathBuf::from(format!(
+            "{}#chapter-{}-{label}",
+            path.display(),
+            page_index + 1
+        )),
+        None => PathBuf::from(format!("{}#page-{}", path.display(), page_index + 1)),
+    }
+}
+
+fn xml_element_name_matches(name: &str, expected: &str) -> bool {
+    xml_local_name(name) == expected
+}
+
+fn xml_local_name(name: &str) -> &str {
+    name.rsplit(':').next().unwrap_or(name)
 }
 
 fn load_docx(path: &Path) -> RebeResult<Vec<Document>> {
@@ -308,6 +535,44 @@ mod tests {
     }
 
     #[test]
+    fn labels_epub_documents_with_ncx_chapter_titles() {
+        if Command::new("zip").arg("--version").output().is_err() {
+            return;
+        }
+
+        let dir_path = temp_dir_path("epub_chapters");
+        let epub_path = dir_path.join("book.epub");
+        let chapters = [
+            EpubFixtureChapter {
+                filename: "opening.xhtml",
+                label: "Opening",
+                content: "Readers enter the opening chapter.",
+            },
+            EpubFixtureChapter {
+                filename: "journey.xhtml",
+                label: "The Journey",
+                content: "Readers continue the journey.",
+            },
+        ];
+
+        write_epub_with_toc(&epub_path, &chapters).expect("write epub fixture");
+
+        let documents = load_documents(&epub_path).expect("load epub");
+
+        assert_eq!(documents.len(), 2);
+        assert_eq!(
+            documents[0].path,
+            PathBuf::from(format!("{}#chapter-1-Opening", epub_path.display()))
+        );
+        assert_eq!(
+            documents[1].path,
+            PathBuf::from(format!("{}#chapter-2-The Journey", epub_path.display()))
+        );
+
+        fs::remove_dir_all(dir_path).ok();
+    }
+
+    #[test]
     fn loads_generated_azw3_document() {
         if Command::new("zip").arg("--version").output().is_err() {
             return;
@@ -464,7 +729,31 @@ mod tests {
             .replace(')', "\\)")
     }
 
+    struct EpubFixtureChapter<'a> {
+        filename: &'a str,
+        label: &'a str,
+        content: &'a str,
+    }
+
     fn write_minimal_epub(path: &Path, text: &str) -> io::Result<()> {
+        let chapters = [EpubFixtureChapter {
+            filename: "chapter1.xhtml",
+            label: "Chapter 1",
+            content: text,
+        }];
+
+        write_epub_fixture(path, &chapters, false)
+    }
+
+    fn write_epub_with_toc(path: &Path, chapters: &[EpubFixtureChapter<'_>]) -> io::Result<()> {
+        write_epub_fixture(path, chapters, true)
+    }
+
+    fn write_epub_fixture(
+        path: &Path,
+        chapters: &[EpubFixtureChapter<'_>],
+        include_toc: bool,
+    ) -> io::Result<()> {
         let staging_path = path
             .parent()
             .expect("epub parent")
@@ -485,7 +774,8 @@ mod tests {
         )?;
         fs::write(
             staging_path.join("OEBPS").join("content.opf"),
-            r#"<?xml version="1.0" encoding="UTF-8"?>
+            format!(
+                r#"<?xml version="1.0" encoding="UTF-8"?>
 <package version="3.0" unique-identifier="bookid" xmlns="http://www.idpf.org/2007/opf">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
     <dc:identifier id="bookid">urn:uuid:rebe-fixture</dc:identifier>
@@ -493,23 +783,75 @@ mod tests {
     <dc:language>en</dc:language>
   </metadata>
   <manifest>
-    <item id="chap1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>
+    {}
+    {}
   </manifest>
-  <spine>
-    <itemref idref="chap1"/>
+  <spine{}>
+    {}
   </spine>
 </package>"#,
-        )?;
-        fs::write(
-            staging_path.join("OEBPS").join("chapter1.xhtml"),
-            format!(
-                r#"<?xml version="1.0" encoding="UTF-8"?>
-<html xmlns="http://www.w3.org/1999/xhtml">
-  <body><p>{}</p></body>
-</html>"#,
-                text
+                chapters
+                    .iter()
+                    .enumerate()
+                    .map(|(index, chapter)| format!(
+                        r#"<item id="chap{}" href="{}" media-type="application/xhtml+xml"/>"#,
+                        index + 1,
+                        chapter.filename
+                    ))
+                    .collect::<Vec<_>>()
+                    .join("\n    "),
+                if include_toc {
+                    r#"<item id="toc" href="toc.ncx" media-type="application/x-dtbncx+xml"/>"#
+                } else {
+                    ""
+                },
+                if include_toc { r#" toc="toc""# } else { "" },
+                chapters
+                    .iter()
+                    .enumerate()
+                    .map(|(index, _)| format!(r#"<itemref idref="chap{}"/>"#, index + 1))
+                    .collect::<Vec<_>>()
+                    .join("\n    "),
             ),
         )?;
+        for chapter in chapters {
+            fs::write(
+                staging_path.join("OEBPS").join(chapter.filename),
+                format!(
+                    r#"<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <body><h1>{}</h1><p>{}</p></body>
+</html>"#,
+                    chapter.label, chapter.content
+                ),
+            )?;
+        }
+
+        if include_toc {
+            fs::write(
+                staging_path.join("OEBPS").join("toc.ncx"),
+                format!(
+                    r#"<?xml version="1.0" encoding="UTF-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+  <navMap>
+    {}
+  </navMap>
+</ncx>"#,
+                    chapters
+                        .iter()
+                        .enumerate()
+                        .map(|(index, chapter)| format!(
+                            r#"<navPoint id="chapter{}" playOrder="{}"><navLabel><text>{}</text></navLabel><content src="{}"/></navPoint>"#,
+                            index + 1,
+                            index + 1,
+                            chapter.label,
+                            chapter.filename
+                        ))
+                        .collect::<Vec<_>>()
+                        .join("\n    "),
+                ),
+            )?;
+        }
 
         let status = Command::new("zip")
             .arg("-q")

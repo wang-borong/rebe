@@ -118,7 +118,7 @@ cargo run -- analyze book.txt \
 - `--include-proper-nouns`：保留候选专有名词；默认会过滤只在非句首大写出现的词。
 - `--ignore-proper-nouns`：过滤候选专有名词；用于覆盖 profile 中的 `include-proper-nouns = true`。
 
-输出字段包含每个词的源文档分布：`sources` 会记录该词在哪些文本文件、EPUB/PDF 页面或电子书中出现，以及各自出现次数。
+输出字段包含每个词的源文档分布：`sources` 会记录该词在哪些文本文件、EPUB 章节（NCX 目录可用时）、PDF 页面或电子书中出现，以及各自出现次数。没有可匹配目录的 EPUB 会继续使用页号标识。
 
 用户 profile 示例：
 
