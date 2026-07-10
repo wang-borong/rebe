@@ -2,6 +2,14 @@
 name = "rebe"
 version = "0.1.0"
 edition = "2021"
+authors = ["Jason Wang <wang_borong@163.com>"]
+description = "Prepare English reading with focused vocabulary reports from books and article corpora"
+license = "GPL-3.0-or-later"
+readme = "README.md"
+repository = "https://github.com/wang-borong/rebe"
+homepage = "https://github.com/wang-borong/rebe"
+keywords = ["english", "reading", "vocabulary", "epub", "dictionary"]
+categories = ["command-line-utilities", "text-processing"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
