@@ -501,16 +501,19 @@ mod tests {
     use std::process::Command;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    const PUBLIC_DOMAIN_MARKER: &str = "You will rejoice to hear";
+
     #[test]
     fn loads_plain_text_document() {
         let path = temp_dir_path("text").join("book.txt");
+        let excerpt = public_domain_excerpt();
         fs::create_dir_all(path.parent().expect("parent")).expect("create dir");
-        fs::write(&path, "Readers read books.").expect("write text");
+        fs::write(&path, &excerpt).expect("write text");
 
         let documents = load_documents(&path).expect("load text");
 
         assert_eq!(documents.len(), 1);
-        assert_eq!(documents[0].sentences.len(), 1);
+        assert!(documents[0].content.contains(PUBLIC_DOMAIN_MARKER));
 
         fs::remove_dir_all(path.parent().expect("parent")).ok();
     }
@@ -523,13 +526,14 @@ mod tests {
 
         let dir_path = temp_dir_path("epub");
         let epub_path = dir_path.join("book.epub");
+        let excerpt = public_domain_excerpt();
 
-        write_minimal_epub(&epub_path, "Readers read EPUB books.").expect("write epub fixture");
+        write_minimal_epub(&epub_path, &excerpt).expect("write epub fixture");
 
         let documents = load_documents(&epub_path).expect("load epub");
 
         assert_eq!(documents.len(), 1);
-        assert!(documents[0].content.contains("Readers read EPUB books"));
+        assert!(documents[0].content.contains(PUBLIC_DOMAIN_MARKER));
 
         fs::remove_dir_all(dir_path).ok();
     }
@@ -581,8 +585,9 @@ mod tests {
         let dir_path = temp_dir_path("azw3");
         let epub_path = dir_path.join("book.epub");
         let azw3_path = dir_path.join("book.azw3");
+        let excerpt = public_domain_excerpt();
 
-        write_minimal_epub(&epub_path, "Readers read AZW3 books.").expect("write epub fixture");
+        write_minimal_epub(&epub_path, &excerpt).expect("write epub fixture");
 
         let mut book = Book::open(&epub_path).expect("open epub with boko");
         let mut output = Cursor::new(Vec::new());
@@ -593,7 +598,7 @@ mod tests {
         let documents = load_documents(&azw3_path).expect("load azw3");
 
         assert_eq!(documents.len(), 1);
-        assert!(documents[0].content.contains("Readers read AZW3 books"));
+        assert!(documents[0].content.contains(PUBLIC_DOMAIN_MARKER));
 
         fs::remove_dir_all(dir_path).ok();
     }
@@ -610,14 +615,15 @@ mod tests {
     fn loads_minimal_pdf_document() {
         let dir_path = temp_dir_path("pdf");
         let pdf_path = dir_path.join("book.pdf");
+        let excerpt = public_domain_excerpt();
 
         fs::create_dir_all(&dir_path).expect("create dir");
-        fs::write(&pdf_path, minimal_pdf_bytes("Readers read PDF books.")).expect("write pdf");
+        fs::write(&pdf_path, minimal_pdf_bytes(&excerpt)).expect("write pdf");
 
         let documents = load_documents(&pdf_path).expect("load pdf");
 
         assert_eq!(documents.len(), 1);
-        assert!(documents[0].content.contains("Readers read PDF books"));
+        assert!(documents[0].content.contains(PUBLIC_DOMAIN_MARKER));
 
         fs::remove_dir_all(dir_path).ok();
     }
@@ -631,6 +637,7 @@ mod tests {
         let dir_path = temp_dir_path("docx");
         let staging_path = dir_path.join("staging");
         let docx_path = dir_path.join("book.docx");
+        let excerpt = public_domain_excerpt();
 
         fs::create_dir_all(staging_path.join("_rels")).expect("create rels dir");
         fs::create_dir_all(staging_path.join("word")).expect("create word dir");
@@ -654,12 +661,15 @@ mod tests {
         .expect("write rels");
         fs::write(
             staging_path.join("word").join("document.xml"),
-            r#"<?xml version="1.0" encoding="UTF-8"?>
+            format!(
+                r#"<?xml version="1.0" encoding="UTF-8"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
   <w:body>
-    <w:p><w:r><w:t>Readers read DOCX books.</w:t></w:r></w:p>
+    <w:p><w:r><w:t>{}</w:t></w:r></w:p>
   </w:body>
 </w:document>"#,
+                escape_xml_text(&excerpt)
+            ),
         )
         .expect("write document");
 
@@ -679,7 +689,7 @@ mod tests {
         let documents = load_documents(&docx_path).expect("load docx");
 
         assert_eq!(documents.len(), 1);
-        assert!(documents[0].content.contains("Readers read DOCX books"));
+        assert!(documents[0].content.contains(PUBLIC_DOMAIN_MARKER));
 
         fs::remove_dir_all(dir_path).ok();
     }
@@ -727,6 +737,19 @@ mod tests {
         text.replace('\\', "\\\\")
             .replace('(', "\\(")
             .replace(')', "\\)")
+    }
+
+    fn escape_xml_text(text: &str) -> String {
+        text.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+    }
+
+    fn public_domain_excerpt() -> String {
+        include_str!("../tests/fixtures/frankenstein-1818-excerpt.txt")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
     struct EpubFixtureChapter<'a> {

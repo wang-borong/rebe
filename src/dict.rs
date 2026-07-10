@@ -573,16 +573,7 @@ mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    const TEST_MDX_BASE64: &str = concat!(
-        "AAAAuDwARABpAGMAdABpAG8AbgBhAHIAeQAgAEcAZQBuAGUAcgBhAHQAZQBkAEIAeQBFAG4AZwBp",
-        "AG4AZQBWAGUAcgBzAGkAbwBuAD0AIgAyAC4AMAAiACAARQBuAGMAbwBkAGkAbgBnAD0AIgBVAFQA",
-        "RgAtADgAIgAgAEYAbwByAG0AYQB0AD0AIgBIAHQAbQBsACIAIABUAGkAdABsAGUAPQAiAFQAZQBz",
-        "AHQAIABEAGkAYwB0ACIAPgDqHuutAAAAAAAAAAEAAAAAAAAAAwAAAAAAAAAlAAAAAAAAACgAAAAA",
-        "AAAAJgSXAHgCAAAARaADXHicY2AAA2YG5rT8fAYGlpLU4hKIEAODGpRWBwBFoANcAgAAAFBaBTd4",
-        "nGNggIC0/Hwoi4ElIzUnB86TKkktLmEAAFBaBTcAAAAAAAAAAQAAAAAAAAADAAAAAAAAABAAAAAA",
-        "AAAAOQAAAAAAAAA5AAAAAAAAACkCAAAAItMN5HicS0osYrBJsstIzcnJt9FPslNIL0pNLcnMS2co",
-        "SS0uUUhJLElUyEgtSmUAACLTDeQ="
-    );
+    const TEST_MDX_BASE64: &str = include_str!("../tests/fixtures/portable-test.mdx.base64");
 
     #[test]
     fn renders_command_with_quoted_word() {
@@ -722,10 +713,10 @@ mod tests {
     }
 
     #[test]
-    fn looks_up_embedded_mdx_fixture() {
+    fn looks_up_repository_mdx_fixture() {
         let path = temp_file_path("fixture", "mdx");
         let fixture = STANDARD
-            .decode(TEST_MDX_BASE64)
+            .decode(TEST_MDX_BASE64.lines().collect::<String>())
             .expect("decode mdx fixture");
         fs::write(&path, fixture).expect("write mdx fixture");
 
