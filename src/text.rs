@@ -1,6 +1,15 @@
 use std::collections::HashMap;
+use std::sync::OnceLock;
+
+use wordnet_lemmatizer::{Lemmatizer, Pos};
 
 pub type LemmaMap = HashMap<String, String>;
+
+static WORDNET_LEMMATIZER: OnceLock<Lemmatizer> = OnceLock::new();
+
+const NOUN_FIRST_POSITIONS: [Pos; 4] = [Pos::Noun, Pos::Verb, Pos::Adj, Pos::Adv];
+const VERB_FIRST_POSITIONS: [Pos; 4] = [Pos::Verb, Pos::Noun, Pos::Adj, Pos::Adv];
+const ADJECTIVE_FIRST_POSITIONS: [Pos; 4] = [Pos::Adj, Pos::Noun, Pos::Verb, Pos::Adv];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Token {
@@ -103,10 +112,41 @@ pub fn normalize_word_with_lemma_map(word: &str, lemma_map: &LemmaMap) -> Option
         return Some(lemma.clone());
     }
 
-    Some(stem_word(&cleaned))
+    Some(lemmatize_word(&cleaned))
 }
 
-fn stem_word(word: &str) -> String {
+fn lemmatize_word(word: &str) -> String {
+    for pos in preferred_parts_of_speech(word) {
+        let lemma = wordnet_lemmatizer().lemmatize(word, *pos);
+
+        if lemma != word {
+            return lemma;
+        }
+    }
+
+    stem_unknown_word(word)
+}
+
+fn wordnet_lemmatizer() -> &'static Lemmatizer {
+    WORDNET_LEMMATIZER.get_or_init(Lemmatizer::embedded)
+}
+
+fn preferred_parts_of_speech(word: &str) -> &'static [Pos] {
+    if word.ends_with("ing") || word.ends_with("ed") || word.ends_with("ies") {
+        return &VERB_FIRST_POSITIONS;
+    }
+
+    if word.ends_with("er")
+        || word.ends_with("est")
+        || matches!(word, "best" | "better" | "worse" | "worst")
+    {
+        return &ADJECTIVE_FIRST_POSITIONS;
+    }
+
+    &NOUN_FIRST_POSITIONS
+}
+
+fn stem_unknown_word(word: &str) -> String {
     if word.len() > 4 && word.ends_with("ies") {
         let mut stem = word[..word.len() - 3].to_string();
         stem.push('y');
@@ -215,6 +255,21 @@ mod tests {
     }
 
     #[test]
+    fn lemmatizes_wordnet_irregular_forms() {
+        assert_eq!(normalize_word("children"), Some("child".to_string()));
+        assert_eq!(normalize_word("geese"), Some("goose".to_string()));
+        assert_eq!(normalize_word("mice"), Some("mouse".to_string()));
+        assert_eq!(normalize_word("ran"), Some("run".to_string()));
+        assert_eq!(normalize_word("went"), Some("go".to_string()));
+        assert_eq!(normalize_word("better"), Some("good".to_string()));
+    }
+
+    #[test]
+    fn falls_back_to_suffix_normalization_for_unknown_words() {
+        assert_eq!(normalize_word("foobars"), Some("foobar".to_string()));
+    }
+
+    #[test]
     fn token_details_preserve_capitalization_signal() {
         let tokens = tokenize_sentence_details("We met Alice and bob.");
 
@@ -227,11 +282,11 @@ mod tests {
     #[test]
     fn lemma_map_overrides_default_normalization() {
         let mut lemma_map = LemmaMap::new();
-        lemma_map.insert("children".to_string(), "child".to_string());
+        lemma_map.insert("mice".to_string(), "rodent".to_string());
 
         assert_eq!(
-            normalize_word_with_lemma_map("children", &lemma_map),
-            Some("child".to_string())
+            normalize_word_with_lemma_map("mice", &lemma_map),
+            Some("rodent".to_string())
         );
     }
 }

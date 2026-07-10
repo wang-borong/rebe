@@ -80,7 +80,7 @@
 
 ## 当前 MVP 使用方式
 
-当前版本先实现文本分析核心，支持单个文本文件、EPUB、PDF、DOCX、Kindle 文件或目录输入。目录输入会递归读取 `.txt`、`.md`、`.markdown`、`.epub`、`.pdf`、`.docx`、`.azw3`、`.azw`、`.mobi`、`.kfx` 文件。EPUB 通过 `epub-parser` crate 解析，PDF 通过 `pdf-extract` crate 解析，DOCX 通过 `docx-lite` crate 解析，Kindle 格式通过 `boko` crate 解析为 Markdown 后进入同一文本分析流程，仅支持非 DRM 文件。EPUB/PDF 会按阅读顺序拆成内部页面文档。已支持词频统计、词形归一表、熟词过滤、额外忽略词过滤、出现次数筛选、频率比例筛选、文档覆盖筛选、覆盖率截断、Top N 筛选、专有名词候选过滤、例句提取、本地 MDX 词典释义、内置有道 API 释义、外部命令插件释义，以及 `txt`、`csv`、`json` 三种输出格式。
+当前版本先实现文本分析核心，支持单个文本文件、EPUB、PDF、DOCX、Kindle 文件或目录输入。目录输入会递归读取 `.txt`、`.md`、`.markdown`、`.epub`、`.pdf`、`.docx`、`.azw3`、`.azw`、`.mobi`、`.kfx` 文件。EPUB 通过 `epub-parser` crate 解析，PDF 通过 `pdf-extract` crate 解析，DOCX 通过 `docx-lite` crate 解析，Kindle 格式通过 `boko` crate 解析为 Markdown 后进入同一文本分析流程，仅支持非 DRM 文件。EPUB/PDF 会按阅读顺序拆成内部页面文档。已支持词频统计、基于 WordNet 的词形还原、词形归一表、熟词过滤、额外忽略词过滤、出现次数筛选、频率比例筛选、文档覆盖筛选、覆盖率截断、Top N 筛选、专有名词候选过滤、例句提取、本地 MDX 词典释义、内置有道 API 释义、外部命令插件释义，以及 `txt`、`csv`、`json` 三种输出格式。
 
 ```bash
 cargo run -- analyze book.txt \
@@ -95,7 +95,7 @@ cargo run -- analyze book.txt \
 - `--known <PATH>`：熟词表，每行一个词，统计结果会排除这些词。
 - `--ignore <PATH>`：额外忽略词表，每行一个词。
 - `--profile <PATH>`：用户 profile 文件，可以在一个文件中维护 `[known]`、`[ignore]`、`[lemma]`、`[defaults]` 配置。
-- `--lemma-map <PATH>`：词形归一表，支持 `surface lemma`、`surface=lemma`、`surface,lemma` 三种写法。
+- `--lemma-map <PATH>`：词形归一表，优先于内置 WordNet 词形还原；支持 `surface lemma`、`surface=lemma`、`surface,lemma` 三种写法。
 - `--min-count <N>` / `--max-count <N>`：按出现次数筛选词汇。
 - `--min-frequency <R>` / `--max-frequency <R>`：按词频比例筛选词汇，支持 `0.05`、`5`、`5%` 三种写法。
 - `--min-doc-count <N>` / `--max-doc-count <N>`：按出现的源文件数量筛选词汇。
@@ -177,7 +177,7 @@ cargo run -- profile add-ignore ~/.config/rebe/profile.ini Alice "project terms"
 
 该命令会跳过 profile 中已经存在的忽略词，并在文件末尾追加新的 `[ignore]` 段，不会重写已有注释和排版。
 
-`--known`、`--ignore`、`--lemma-map` 仍然可以和 `--profile` 叠加使用；其中单独传入的 `--lemma-map` 会覆盖 profile 中同名的 lemma 规则。`[defaults]` 支持常用筛选、排序、输出格式和释义相关默认值，例如 `min-count`、`max-count`、`min-frequency`、`coverage`、`top`、`sort`、`format`、`define-mdx`、`mdx-definition-format`、`definition-limit`、`definition-timeout-ms`、`definition-max-chars`。命令行显式传入的参数会覆盖 profile 默认值。
+`--known`、`--ignore`、`--lemma-map` 仍然可以和 `--profile` 叠加使用；其中单独传入的 `--lemma-map` 会覆盖 profile 中同名的 lemma 规则，并优先于内置 WordNet 词形还原。未使用词性标注时，内置还原会按单词形态选择最可能的词性；存在歧义的词可通过 lemma map 覆盖。`[defaults]` 支持常用筛选、排序、输出格式和释义相关默认值，例如 `min-count`、`max-count`、`min-frequency`、`coverage`、`top`、`sort`、`format`、`define-mdx`、`mdx-definition-format`、`definition-limit`、`definition-timeout-ms`、`definition-max-chars`。命令行显式传入的参数会覆盖 profile 默认值。
 
 内置有道 API 用法：
 
